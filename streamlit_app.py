@@ -282,7 +282,7 @@ def inject_style():
     .chart-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:10px; }.chart-title{font-weight:700;font-size:15px}.chart-sub{font:10px 'IBM Plex Mono',monospace;color:#8a8e87;text-transform:uppercase}
     .source-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:13px; margin:7px 0; }
     .source-card h3{margin:0 0 5px}.source-card p{color:#7c8179;font-size:12px}.source-count{color:#849069;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase}
-    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { padding:7px 11px !important; font-size:12px !important; } [data-testid='stFileUploader'] section { padding:8px !important; } .stSelectbox label, .stRadio label { font-size:12px !important; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
+    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { padding:7px 11px !important; font-size:12px !important; } [data-testid='stFileUploader'] section { padding:5px !important; min-height:72px !important; } [data-testid='stFileUploader'] button { padding:4px 8px !important; font-size:11px !important; } [data-testid='stFileUploader'] small { font-size:10px !important; } .stSelectbox label, .stRadio label { font-size:12px !important; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
     </style>
     """, unsafe_allow_html=True)
 
@@ -307,7 +307,13 @@ def main():
         with c1: excel = st.file_uploader("Inserir planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Inserir limite SHP", type=["shp"], key="shp")
         st.markdown("<p class='lead' style='font-size:12px'>A fazenda e o cliente são lidos diretamente da planilha. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
-        ready = st.button("✓  Pronto", type="primary", use_container_width=True)
+        action_left, action_right = st.columns([1, 1])
+        with action_left:
+            available = bool(st.session_state.analyses)
+            consolidated_data = export_consolidated([(a["result"], a["polygons"]) for a in st.session_state.analyses]) if available else b""
+            st.download_button("↓  Baixar médias", consolidated_data, "outlieria_analises_consolidadas_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", disabled=not available, use_container_width=False)
+        with action_right:
+            ready = st.button("✓  Pronto", type="primary", use_container_width=False)
         if ready:
             if not excel or not shp: st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
             else:
@@ -330,7 +336,6 @@ def main():
             st.download_button("Baixar planilha original com outliers destacados", export_individual(current["original"], current["evidence"]), "outlieria_reanalise_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             all_results = [(a["result"], a["polygons"]) for a in st.session_state.analyses]
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
-            st.download_button("Baixar médias dos municípios e estados", export_consolidated(all_results), "outlieria_analises_consolidadas_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         return
     if not st.session_state.analyses:
         st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
