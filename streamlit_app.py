@@ -139,6 +139,7 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
         frames[str(year)] = frame
     if not frames:
         raise ValueError("Nenhuma aba anual YYYY foi encontrada.")
+    elements = numeric_element_columns(next(iter(frames.values())))
     all_rows = []
     for year, frame in frames.items():
         required = {"Longitude", "Latitude", "Profundidade"}
@@ -153,18 +154,20 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
             if polygon_index < 0:
                 continue
             crop = str(row.get("Área/Lavoura") or "Lavoura não identificada")
+            # Mantém no processamento somente os elementos válidos. As colunas
+            # S–W e AC em diante continuam existindo apenas no arquivo original.
+            analysis_raw = {element: row.get(element) for element in elements}
             all_rows.append({
                 "year": year, "source_row": int(row["__excel_row"]), "sheet": year,
                 "point_id": str(row.get("ID") or ""), "client": client_override or detected_client,
                 "farm": farm_override or str(row.get("Fazenda") or detected_farm or "Fazenda não identificada"),
                 "crop": crop, "depth": str(row.get("Profundidade") or "Não informado"),
                 "longitude": float(row["Longitude"]), "latitude": float(row["Latitude"]),
-                "polygon_index": polygon_index, "raw": row.to_dict(),
+                "polygon_index": polygon_index, "raw": analysis_raw,
             })
     if not all_rows:
         raise ValueError("Nenhum ponto com coordenadas foi encontrado dentro do SHP.")
     sample = pd.DataFrame(all_rows)
-    elements = numeric_element_columns(next(iter(frames.values())))
     for element in elements:
         sample[element] = pd.to_numeric(sample["raw"].map(lambda x: x.get(element)), errors="coerce")
     return sample, elements, frames
