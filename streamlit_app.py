@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import math
 import os
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -329,15 +330,29 @@ def main():
                         st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": polygons})
                         st.success(f"Aba 2026 atualizada: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
                     except Exception as exc: st.exception(exc)
-        st.markdown("<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
         if not st.session_state.analyses:
             st.info("Nenhuma análise processada nesta sessão.")
         else:
             for analysis in st.session_state.analyses:
-                st.markdown(f"<div class='source-card'><div class='source-count'>fonte registrada</div><h3>{analysis['name']}</h3><p>{len(analysis['evidence'])} outliers · {len(analysis['attention'])} pontos em atenção · planilha e SHP processados</p></div>", unsafe_allow_html=True)
-            current = st.session_state.analyses[-1]
-            st.download_button("Baixar planilha original com outliers destacados", export_individual(current["original"], current["evidence"]), "outlieria_reanalise_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            all_results = [(a["result"], a["polygons"]) for a in st.session_state.analyses]
+                result = analysis["result"]
+                client_name = str(result.client.dropna().iloc[0]) if not result.empty else "—"
+                farm_name = str(result.farm.dropna().iloc[0]) if not result.empty else "—"
+                area_ha = sum(p.area_ha for p in analysis["polygons"])
+                with st.container(border=True):
+                    row_main, row_client, row_farm, row_date, row_area, row_download = st.columns([2.5, 1.2, 1.35, 1.0, 1.0, 1.35])
+                    with row_main:
+                        st.markdown(f"**▧  {farm_name} · análise 2026**<br><span class='mono' style='font-size:9px;color:#7c8179'>planilha + limite SHP armazenados nesta sessão</span>", unsafe_allow_html=True)
+                    with row_client:
+                        st.caption("CLIENTE"); st.markdown(f"**{client_name}**")
+                    with row_farm:
+                        st.caption("FAZENDA"); st.markdown(f"**{farm_name}**")
+                    with row_date:
+                        st.caption("INSERÇÃO"); st.markdown(f"**{datetime.now().strftime('%d %b %Y')}**")
+                    with row_area:
+                        st.caption("ÁREA 2026"); st.markdown(f"**{area_ha:,.1f} ha**".replace(',', 'X').replace('.', ',').replace('X', '.'))
+                    with row_download:
+                        st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], analysis["evidence"]), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis['name']}")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
         return
     if not st.session_state.analyses:
