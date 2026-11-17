@@ -419,22 +419,19 @@ def main():
     with c2:
         st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    mode = st.radio("Filtrar", ["Todos", "Outliers", "Atenção"], index=1, horizontal=True, label_visibility="collapsed")
-    table = result.copy()
-    if mode == "Outliers": table = table[table.status == "outlier"]
-    if mode == "Atenção": table = table[table.status == "atenção"]
-    st.markdown("<div class='section-kicker' style='margin:10px 0 4px'>filtros por coluna</div>", unsafe_allow_html=True)
-    filter_specs = [("linha", "source_row"), ("ponto", "point_id"), ("lavoura", "crop"), ("profundidade", "depth"), ("elemento", "element"), ("sinal", "status")]
-    filter_values = {}
-    filter_cols = st.columns(3)
-    for index, (label, column) in enumerate(filter_specs):
-        with filter_cols[index % 3]:
-            options = ["Todos"] + sorted(table[column].dropna().astype(str).unique().tolist())
-            selected = st.selectbox(label.capitalize(), options, key=f"table_filter_{column}")
-            filter_values[column] = selected
-    for column, selected in filter_values.items():
-        if selected != "Todos":
-            table = table[table[column].astype(str) == selected]
+    table = result[result.status == "outlier"].copy()
+    # Os três selects ficam na mesma grade das colunas correspondentes da tabela.
+    # Não há uma barra de filtros separada nem opções para exibir pontos normais.
+    header_filters = st.columns([1.0, 1.0, 1.35, 1.2, 1.2, 1.0, 0.9])
+    with header_filters[2]:
+        selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
+    with header_filters[3]:
+        selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
+    with header_filters[4]:
+        selected_element = st.selectbox("Elemento", ["Todos"] + sorted(table.element.dropna().astype(str).unique().tolist()), key="table_filter_element", label_visibility="collapsed")
+    if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
+    if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
+    if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
     st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
 
 
