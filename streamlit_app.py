@@ -300,19 +300,15 @@ def main():
         c1, c2 = st.columns(2)
         with c1: excel = st.file_uploader("Inserir planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Inserir limite SHP", type=["shp"], key="shp")
-        c1, c2, c3 = st.columns([1,1,2])
-        with c1: client = st.text_input("Cliente", key="client_input")
-        with c2: farm = st.text_input("Fazenda", key="farm_input")
-        with c3:
-            st.write("")
-            ready = st.button("✓  Pronto", type="primary", use_container_width=True)
+        st.markdown("<p class='lead' style='font-size:12px'>A fazenda e o cliente são lidos diretamente da planilha. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
+        ready = st.button("✓  Pronto", type="primary", use_container_width=True)
         if ready:
             if not excel or not shp: st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
             else:
                 with st.spinner("Processando Excel, SHP, histórico e localização..."):
                     try:
                         polygons = read_polygons(shp.getvalue())
-                        sample, elements, _ = parse_workbook(excel.getvalue(), polygons, client, farm)
+                        sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         result, _, _ = classify(sample, elements); result = locate_ibge(result)
                         evidence = result[result.status == "outlier"].copy(); attention = result[result.status == "atenção"].copy()
                         st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": polygons})
@@ -327,7 +323,8 @@ def main():
             current = st.session_state.analyses[-1]
             st.download_button("Baixar planilha original com outliers destacados", export_individual(current["original"], current["evidence"]), "outlieria_reanalise_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             all_results = [(a["result"], a["polygons"]) for a in st.session_state.analyses]
-            st.download_button("Baixar análises 2026 — médias consolidadas", export_consolidated(all_results), "outlieria_analises_consolidadas_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
+            st.download_button("Baixar médias dos municípios e estados", export_consolidated(all_results), "outlieria_analises_consolidadas_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         return
     if not st.session_state.analyses:
         st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
