@@ -427,18 +427,19 @@ def main():
         return
     current = st.session_state.analyses[-1]
     result = pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
-    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
     st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
     filter_col1, filter_col2 = st.columns(2)
     client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
     with filter_col1:
         selected_client = st.selectbox("Cliente", client_options, key="analysis_client")
     farm_source = result[result.client.astype(str) == selected_client] if selected_client != "Todos" else result.iloc[0:0]
-    farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Todas"] + sorted(farm_source.farm.dropna().astype(str).unique().tolist())
+    farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Selecione uma fazenda"] + ordered_unique(farm_source.farm)
     with filter_col2:
         selected_farm = st.selectbox("Fazenda", farm_options, key="analysis_farm", disabled=selected_client == "Todos")
-    if selected_client != "Todos": result = result[result.client.astype(str) == selected_client]
-    if selected_client != "Todos" and selected_farm != "Todas": result = result[result.farm.astype(str) == selected_farm]
+    if selected_client == "Todos" or selected_farm in {"Selecione um cliente", "Selecione uma fazenda"}:
+        st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
+        return
+    result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
     st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de 300 m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
