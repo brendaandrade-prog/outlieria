@@ -274,7 +274,8 @@ def render_scatter(result: pd.DataFrame) -> None:
     for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
         status = str(row.get("status", "normal")); color = colors.get(status, "#487c80")
         label = html.escape(f"Ponto {row.get('point_id', row.get('source_row', ''))} · valor {y:.2f}")
-        circles.append(f'<circle cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"><title>{label}</title></circle>')
+        px, py = sx(x), sy(y)
+        circles.append(f'<g><title>{label}</title><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><text x="{px + 6:.1f}" y="{py - 6:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">{y:.2f}</text></g>')
     grid = "".join(f'<line x1="{left}" x2="{width-right}" y1="{top + i*55}" y2="{top + i*55}" stroke="#e5e8df" stroke-width="1"/>' for i in range(5))
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="10"><circle cx="55" cy="265" r="4" fill="#487c80"/><text x="64" y="269" fill="#6f7c76">padrão</text><circle cx="140" cy="265" r="4" fill="#b79b43"/><text x="149" y="269" fill="#6f7c76">atenção</text><circle cx="225" cy="265" r="4" fill="#d8793e"/><text x="234" y="269" fill="#6f7c76">outlier 2026</text></g>'
     st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão">{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
@@ -422,6 +423,18 @@ def main():
     table = result.copy()
     if mode == "Outliers": table = table[table.status == "outlier"]
     if mode == "Atenção": table = table[table.status == "atenção"]
+    st.markdown("<div class='section-kicker' style='margin:10px 0 4px'>filtros por coluna</div>", unsafe_allow_html=True)
+    filter_specs = [("linha", "source_row"), ("ponto", "point_id"), ("lavoura", "crop"), ("profundidade", "depth"), ("elemento", "element"), ("sinal", "status")]
+    filter_values = {}
+    filter_cols = st.columns(3)
+    for index, (label, column) in enumerate(filter_specs):
+        with filter_cols[index % 3]:
+            options = ["Todos"] + sorted(table[column].dropna().astype(str).unique().tolist())
+            selected = st.selectbox(label.capitalize(), options, key=f"table_filter_{column}")
+            filter_values[column] = selected
+    for column, selected in filter_values.items():
+        if selected != "Todos":
+            table = table[table[column].astype(str) == selected]
     st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
 
 
