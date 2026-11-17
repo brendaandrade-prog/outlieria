@@ -93,6 +93,12 @@ def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
 
 def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: str, farm_override: str):
     workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    detected_client = "Cliente não identificado"
+    detected_farm = ""
+    if "Resumo de Amostragem" in workbook.sheetnames:
+        title = str(workbook["Resumo de Amostragem"].cell(1, 1).value or "")
+        if " - " in title:
+            detected_client, detected_farm = [part.strip() for part in title.split(" - ", 1)]
     annual = [name for name in workbook.sheetnames if str(name).isdigit() and len(str(name)) == 4]
     frames: dict[str, pd.DataFrame] = {}
     for year in annual:
@@ -126,8 +132,8 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
             crop = str(row.get("Área/Lavoura") or "Lavoura não identificada")
             all_rows.append({
                 "year": year, "source_row": int(row["__excel_row"]), "sheet": year,
-                "point_id": str(row.get("ID") or ""), "client": client_override or "Cliente não identificado",
-                "farm": farm_override or str(row.get("Fazenda") or "Fazenda não identificada"),
+                "point_id": str(row.get("ID") or ""), "client": client_override or detected_client,
+                "farm": farm_override or str(row.get("Fazenda") or detected_farm or "Fazenda não identificada"),
                 "crop": crop, "depth": str(row.get("Profundidade") or "Não informado"),
                 "longitude": float(row["Longitude"]), "latitude": float(row["Latitude"]),
                 "polygon_index": polygon_index, "raw": row.to_dict(),
@@ -330,10 +336,21 @@ def main():
         st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
         st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
         return
-    current = st.session_state.analyses[-1]; result = current["result"]
-    result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
+    current = st.session_state.analyses[-1]; result = current["result"].copy()
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
     st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
+    filter_col1, filter_col2 = st.columns(2)
+    client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
+    with filter_col1:
+        selected_client = st.selectbox("Cliente", client_options, key="analysis_client")
+    farm_source = result if selected_client == "Todos" else result[result.client.astype(str) == selected_client]
+    farm_options = ["Todos"] + sorted(farm_source.farm.dropna().astype(str).unique().tolist())
+    with filter_col2:
+        selected_farm = st.selectbox("Fazenda", farm_options, key="analysis_farm")
+    if selected_client != "Todos": result = result[result.client.astype(str) == selected_client]
+    if selected_farm != "Todos": result = result[result.farm.astype(str) == selected_farm]
+    result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
+    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
     st.markdown(f"<div class='file-strip'><div style='font-size:22px'>▣</div><div><strong>{current['name']}</strong><span>aba analisada: 2026 · {result.state.iloc[0] if 'state' in result else 'localização pendente'}</span></div><span class='badge'>● RECORTE ATUALIZADO</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de 300 m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'próximos das cercas IQR', 'sand')}{html_stat('outliers 2026', outliers, 'somente no último ano', 'orange')}</div>", unsafe_allow_html=True)
