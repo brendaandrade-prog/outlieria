@@ -26,6 +26,7 @@ IQR_MULTIPLIER = 1.5
 ATTENTION_MARGIN = 0.10
 IGNORED_COLUMNS = {"A", "B", "G", "H", "S", "T", "U", "V", "W"}
 IGNORED_FROM_INDEX = 28  # AC, zero based
+IGNORED_ELEMENTS = {"H+AL", "CTC EFETIVA", "CTC", "SB", "SA", "SK", "RELEVO", "SCA", "SMG", "CA/MG"}
 ELEMENT_LABELS = {
     "PH": "pH",
     "SMP": "Índice SMP",
@@ -106,7 +107,7 @@ def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
     elements = []
     for index, name in enumerate(frame.columns):
         normalized_name = str(name).strip().upper()
-        if index >= IGNORED_FROM_INDEX or name in excluded or normalized_name in IGNORED_COLUMNS:
+        if index >= IGNORED_FROM_INDEX or name in excluded or normalized_name in IGNORED_COLUMNS or normalized_name in IGNORED_ELEMENTS:
             continue
         numeric = pd.to_numeric(frame[name], errors="coerce")
         if numeric.notna().any():
@@ -181,7 +182,7 @@ def classify(sample: pd.DataFrame, elements: list[str]) -> tuple[pd.DataFrame, p
         for element in elements:
             # Segurança adicional: mesmo que uma planilha ou sessão antiga
             # carregue uma dessas colunas, ela nunca entra nos resultados.
-            if str(element).strip().upper() in IGNORED_COLUMNS:
+            if str(element).strip().upper() in IGNORED_COLUMNS or str(element).strip().upper() in IGNORED_ELEMENTS:
                 continue
             value = row.get(element)
             if pd.isna(value):
