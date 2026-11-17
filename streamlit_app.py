@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import html
 import math
 import os
 from datetime import datetime
@@ -246,8 +247,37 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
 
 
 def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
-    columns = ["source_row", "point_id", "crop", "depth", "element", "value", "municipality", "state", "status", "direction", "historical_mean", "q1", "q3", "iqr", "lower_fence", "upper_fence"]
-    return result[[c for c in columns if c in result.columns]].rename(columns={"source_row": "linha", "point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "municipality": "município", "state": "estado", "status": "sinal", "direction": "direção"})
+    columns = ["source_row", "point_id", "crop", "depth", "element", "value", "status"]
+    frame = result[[c for c in columns if c in result.columns]].copy()
+    if "value" in frame.columns:
+        frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
+    return frame.rename(columns={"source_row": "linha", "point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal"})
+
+
+def render_scatter(result: pd.DataFrame) -> None:
+    """Renderiza dispersão em SVG, sem Altair, Plotly ou dependências de gráfico."""
+    points = result.dropna(subset=["source_row", "value"]).copy()
+    if points.empty:
+        return
+    width, height = 820, 280
+    left, right, top, bottom = 48, 16, 18, 38
+    x_values = pd.to_numeric(points["source_row"], errors="coerce").fillna(0).to_numpy(dtype=float)
+    y_values = pd.to_numeric(points["value"], errors="coerce").to_numpy(dtype=float)
+    x_min, x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
+    y_min, y_max = float(np.nanmin(y_values)), float(np.nanmax(y_values))
+    if x_min == x_max: x_max = x_min + 1
+    if y_min == y_max: y_max = y_min + 1
+    def sx(x): return left + ((x - x_min) / (x_max - x_min)) * (width - left - right)
+    def sy(y): return top + ((y_max - y) / (y_max - y_min)) * (height - top - bottom)
+    colors = {"outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
+    circles = []
+    for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
+        status = str(row.get("status", "normal")); color = colors.get(status, "#487c80")
+        label = html.escape(f"Ponto {row.get('point_id', row.get('source_row', ''))} · valor {y:.2f}")
+        circles.append(f'<circle cx="{sx(x):.1f}" cy="{sy(y):.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"><title>{label}</title></circle>')
+    grid = "".join(f'<line x1="{left}" x2="{width-right}" y1="{top + i*55}" y2="{top + i*55}" stroke="#e5e8df" stroke-width="1"/>' for i in range(5))
+    legend = '<g font-family="IBM Plex Mono, monospace" font-size="10"><circle cx="55" cy="265" r="4" fill="#487c80"/><text x="64" y="269" fill="#6f7c76">padrão</text><circle cx="140" cy="265" r="4" fill="#b79b43"/><text x="149" y="269" fill="#6f7c76">atenção</text><circle cx="225" cy="265" r="4" fill="#d8793e"/><text x="234" y="269" fill="#6f7c76">outlier 2026</text></g>'
+    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão">{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
 
 
 def inject_style():
@@ -384,19 +414,15 @@ def main():
         depth = st.selectbox("Profundidade", sorted(result.depth.unique()), label_visibility="collapsed")
         chart = result[(result.element == element) & (result.depth == depth)].copy()
         if not chart.empty:
-            # Evita o import de Altair em tempo de execução, incompatível em
-            # algumas combinações de Streamlit e Python 3.14 no Cloud.
-            chart_plot = chart.pivot_table(index="source_row", columns="status_label", values="value", aggfunc="mean").sort_index()
-            chart_plot = chart_plot.rename(columns={"padrão": "Padrão", "atenção": "Atenção", "outlier 2026": "Outlier 2026"})
-            st.line_chart(chart_plot, height=280, use_container_width=True)
+            render_scatter(chart)
     with c2:
         st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    mode = st.radio("Filtrar", ["Todos", "Outliers", "Atenção"], horizontal=True, label_visibility="collapsed")
+    mode = st.radio("Filtrar", ["Todos", "Outliers", "Atenção"], index=1, horizontal=True, label_visibility="collapsed")
     table = result.copy()
     if mode == "Outliers": table = table[table.status == "outlier"]
     if mode == "Atenção": table = table[table.status == "atenção"]
-    st.dataframe(frame_for_display(table), use_container_width=True, hide_index=True, height=430)
+    st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
 
 
 if __name__ == "__main__":
