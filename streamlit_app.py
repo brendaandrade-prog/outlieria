@@ -20,6 +20,7 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from shapely.geometry import Point, shape as shapely_shape
+from cloud_storage import configured as cloud_storage_configured, persist_analysis
 
 YEAR_RE = r"^\d{4}$"
 CURRENT_YEAR = "2026"
@@ -206,7 +207,7 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
     return sample, elements, frames
 
 
-def classify(sample: pd.DataFrame, elements: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def classify(sample: pd.DataFrame, elements: list[str], radius_m: float = MAX_DISTANCE_M) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     current = sample[sample.year == CURRENT_YEAR].copy()
     historical = sample[sample.year != CURRENT_YEAR].copy()
     results, evidence, attention = [], [], []
@@ -221,7 +222,7 @@ def classify(sample: pd.DataFrame, elements: list[str]) -> tuple[pd.DataFrame, p
                 continue
             candidates = historical[(historical.crop == row.crop) & (historical.depth == row.depth)]
             distances = candidates.apply(lambda h: haversine(row.longitude, row.latitude, h.longitude, h.latitude), axis=1) if not candidates.empty else pd.Series(dtype=float)
-            candidates = candidates.loc[distances[distances <= MAX_DISTANCE_M].index] if not candidates.empty else candidates
+            candidates = candidates.loc[distances[distances <= radius_m].index] if not candidates.empty else candidates
             values = pd.to_numeric(candidates[element], errors="coerce").dropna().to_numpy() if not candidates.empty else np.array([])
             if len(values) < 2:
                 status, direction, q1, q3, iqr, lower, upper, mean = "normal", "", np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
@@ -260,7 +261,7 @@ def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
+def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float = MAX_DISTANCE_M) -> bytes:
     workbook = load_workbook(io.BytesIO(original))
     sheet = workbook[CURRENT_YEAR]
     # Snapshot explícito: as colunas excluídas permanecem com os valores
@@ -283,7 +284,7 @@ def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
         cell = sheet.cell(int(item.source_row), column)
         cell.fill = fill
         cell.font = Font(name=cell.font.name, sz=cell.font.sz, bold=True, color="7A2E00")
-        cell.comment = Comment(f"OUTLIER 2026 comparado ao histórico regional de 300 m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.", "Outlieria")
+        cell.comment = Comment(f"OUTLIER 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.", "Outlieria")
     for (row, column), value in original_values.items():
         sheet.cell(row, column).value = value
     # As colunas preservadas podem conter fórmulas; solicite ao Excel/LibreOffice
@@ -466,18 +467,21 @@ def main():
     st.set_page_config(page_title="Outlieria", page_icon="◌", layout="wide", initial_sidebar_state="expanded")
     inject_style()
     if "analyses" not in st.session_state: st.session_state.analyses = []
+    active_radius = float(st.session_state.analyses[-1].get("radius_m", MAX_DISTANCE_M)) if st.session_state.analyses else MAX_DISTANCE_M
     with st.sidebar:
         st.markdown("<div class='brand'><span class='brand-mark'></span><span>outlieria</span></div>", unsafe_allow_html=True)
         st.markdown("<div class='rail-caption'>análise agrícola</div>", unsafe_allow_html=True)
         page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
-        st.markdown("<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · 300 m</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · {active_radius:g} m</span></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
     if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
-        c1, c2, _ = st.columns([1.25, 1.25, 1.5])
+        c1, c2, c3 = st.columns([1.25, 1.25, 1.0])
         with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
-        st.markdown("<p class='lead' style='font-size:12px'>A fazenda e o cliente são lidos diretamente da planilha. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
+        with c3:
+            radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto.", key="radius_m")
+        st.markdown("<p class='lead' style='font-size:12px'>O raio informado é aplicado separadamente a cada ponto, mantendo lavoura e profundidade isoladas. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
         action_left, action_right = st.columns([1, 1])
         with action_left:
             available = bool(st.session_state.analyses)
@@ -492,9 +496,22 @@ def main():
                     try:
                         polygons = read_polygons(shp.getvalue())
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
-                        result, _, _ = classify(sample, elements); result = locate_ibge(result)
+                        radius_m = float(radius_m)
+                        result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
                         evidence = result[result.status == "outlier"].copy(); attention = result[result.status == "atenção"].copy()
-                        st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": polygons, "elements": elements})
+                        original_bytes = excel.getvalue()
+                        shp_bytes = shp.getvalue()
+                        reanalysis_bytes = export_individual(original_bytes, evidence, radius_m)
+                        client_name = str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente"
+                        farm_name = str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda"
+                        area_ha = sum(p.area_ha for p in polygons)
+                        st.session_state.analyses.append({"name": excel.name, "original": original_bytes, "shp_bytes": shp_bytes, "radius_m": radius_m, "result": result, "evidence": evidence, "attention": attention, "polygons": polygons, "elements": elements})
+                        if cloud_storage_configured():
+                            try:
+                                persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel.name, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention))
+                                st.success("Análise processada e persistida no Supabase e no Google Drive.")
+                            except Exception as storage_exc:
+                                st.warning(f"A análise foi processada nesta sessão, mas não pôde ser sincronizada com a nuvem: {storage_exc}")
                         st.success(f"Aba 2026 atualizada: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
                     except Exception as exc: st.exception(exc)
         st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
@@ -521,7 +538,7 @@ def main():
                         st.caption("ÁREA 2026"); st.markdown(f"**{area_ha:,.1f} ha**".replace(',', 'X').replace('.', ',').replace('X', '.'))
                     with row_download:
                         st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-                        st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], analysis["evidence"]), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis['name']}")
+                        st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], analysis["evidence"], float(analysis.get("radius_m", MAX_DISTANCE_M))), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis['name']}")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
         return
     if not st.session_state.analyses:
@@ -552,7 +569,7 @@ def main():
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de 300 m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de {active_radius:g} m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'próximos das cercas IQR', 'sand')}{html_stat('outliers 2026', outliers, 'somente no último ano', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
@@ -565,7 +582,7 @@ def main():
         if not chart.empty:
             render_scatter(chart)
     with c2:
-        st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>{active_radius:g} m</b><br><span class='mono'>raio espacial ativo</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
     table = result[result.status == "outlier"].copy()
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
