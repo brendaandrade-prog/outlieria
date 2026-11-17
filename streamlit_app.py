@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 import shapefile
 import streamlit as st
+import streamlit.components.v1 as components
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
@@ -305,6 +306,37 @@ def render_scatter(result: pd.DataFrame) -> None:
     st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.outlieria-point .point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s}}.outlieria-point:hover .point-tooltip{{opacity:1}}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
 
 
+def render_outlier_table(result: pd.DataFrame) -> None:
+    """Tabela compacta com filtros como setas dentro dos cabeçalhos."""
+    frame = frame_for_display(result)
+    columns = [("ponto", "ponto"), ("lavoura", "lavoura"), ("profundidade", "profundidade"), ("elemento", "elemento"), ("valor", "valor"), ("sinal", "sinal")]
+    filter_columns = {"lavoura", "profundidade", "elemento"}
+    options = {column: sorted(frame[column].dropna().astype(str).unique().tolist()) for column in filter_columns}
+    headers = []
+    for label, column in columns:
+        if column in filter_columns:
+            option_html = "".join(f'<option value="{html.escape(value)}">{html.escape(value)}</option>' for value in options[column])
+            headers.append(f'<th>{label}<select class="header-filter" data-filter="{column}" aria-label="Filtrar {label}"><option value="">⌄</option>{option_html}</select></th>')
+        else:
+            headers.append(f"<th>{label}</th>")
+    rows = []
+    for _, row in frame.iterrows():
+        cells = []
+        for _, column in columns:
+            value = row.get(column, "")
+            display = f"{float(value):.2f}" if column == "valor" and pd.notna(value) else str(value)
+            cells.append(f'<td data-value="{html.escape(str(value))}">{html.escape(display)}</td>')
+        rows.append(f'<tr data-crop="{html.escape(str(row.get("lavoura", "")))}" data-depth="{html.escape(str(row.get("profundidade", "")))}" data-element="{html.escape(str(row.get("elemento", "")))}">{"".join(cells)}</tr>')
+    markup = f'''<!doctype html><html><head><style>
+    *{{box-sizing:border-box}}body{{margin:0;background:#fffdf8;color:#173638;font:12px Arial,sans-serif}}.table-wrap{{border:1px solid #dce1d1;border-radius:9px;overflow:hidden}}table{{width:100%;border-collapse:collapse}}th{{height:34px;background:#f0f3e9;color:#64716a;text-align:left;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase;padding:6px 8px;white-space:nowrap}}td{{height:30px;border-top:1px solid #edf0e8;padding:5px 8px;white-space:nowrap}}tr:hover{{background:#f7faed}}.header-filter{{appearance:none;border:0;background:transparent;color:#70823e;font-size:13px;width:17px;height:17px;padding:0;margin-left:5px;cursor:pointer;vertical-align:middle}}.header-filter:focus{{outline:1px solid #b9ce72;border-radius:3px}}select option{{color:#173638;background:#fff}}.empty{{padding:20px;color:#7c8179;text-align:center}}
+    </style></head><body><div class="table-wrap"><table><thead><tr>{''.join(headers)}</tr></thead><tbody id="rows">{''.join(rows)}</tbody></table></div><script>
+    const filters=[...document.querySelectorAll('.header-filter')]; const tableRows=[...document.querySelectorAll('#rows tr')];
+    function applyFilters(){{const active=filters.filter(f=>f.value).map(f=>[f.dataset.filter,f.value]);tableRows.forEach(row=>{{row.style.display=active.every(([key,value])=>row.dataset[key]===value)?'':'none'}})}}
+    filters.forEach(filter=>filter.addEventListener('change',applyFilters));
+    </script></body></html>'''
+    components.html(markup, height=430, scrolling=True)
+
+
 def inject_style():
     st.markdown("""
     <style>
@@ -454,19 +486,7 @@ def main():
         st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
     table = result[result.status == "outlier"].copy()
-    # Os três selects ficam na mesma grade das colunas correspondentes da tabela.
-    # Não há uma barra de filtros separada nem opções para exibir pontos normais.
-    header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
-    with header_filters[1]:
-        selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
-    with header_filters[2]:
-        selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
-    with header_filters[3]:
-        selected_element = st.selectbox("Elemento", ["Todos"] + sorted(table.element.dropna().astype(str).unique().tolist()), key="table_filter_element", label_visibility="collapsed")
-    if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
-    if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
-    if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
-    st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
+    render_outlier_table(table)
 
 
 if __name__ == "__main__":
