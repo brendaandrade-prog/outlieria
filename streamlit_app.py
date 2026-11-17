@@ -480,7 +480,7 @@ def main():
         with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
         with c3:
-            radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto.", key="radius_m")
+            radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto. Utilize sempre o raio do maior grid para a comparação.", key="radius_m")
         st.markdown("<p class='lead' style='font-size:12px'>O raio informado é aplicado separadamente a cada ponto, mantendo lavoura e profundidade isoladas. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
         action_left, action_right = st.columns([1, 1])
         with action_left:
