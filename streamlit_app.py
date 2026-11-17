@@ -4,6 +4,7 @@ import io
 import html
 import math
 import os
+import unicodedata
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Iterable
@@ -107,7 +108,7 @@ def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
     elements = []
     for index, name in enumerate(frame.columns):
         normalized_name = str(name).strip().upper()
-        if index >= IGNORED_FROM_INDEX or name in excluded or normalized_name in IGNORED_COLUMNS or normalized_name in IGNORED_ELEMENTS:
+        if index >= IGNORED_FROM_INDEX or name in excluded or is_ignored_element(name):
             continue
         numeric = pd.to_numeric(frame[name], errors="coerce")
         if numeric.notna().any():
@@ -182,7 +183,7 @@ def classify(sample: pd.DataFrame, elements: list[str]) -> tuple[pd.DataFrame, p
         for element in elements:
             # Segurança adicional: mesmo que uma planilha ou sessão antiga
             # carregue uma dessas colunas, ela nunca entra nos resultados.
-            if str(element).strip().upper() in IGNORED_COLUMNS or str(element).strip().upper() in IGNORED_ELEMENTS:
+            if is_ignored_element(element):
                 continue
             value = row.get(element)
             if pd.isna(value):
@@ -294,6 +295,11 @@ def ordered_unique(values: pd.Series) -> list[str]:
 
 def element_label(value: object) -> str:
     return ELEMENT_LABELS.get(str(value), str(value))
+
+
+def is_ignored_element(value: object) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(value).strip()).encode("ascii", "ignore").decode().upper()
+    return normalized in IGNORED_COLUMNS or normalized in IGNORED_ELEMENTS or normalized.startswith("SATURAC")
 
 
 def render_scatter(result: pd.DataFrame) -> None:
@@ -462,11 +468,12 @@ def main():
         return
     current = st.session_state.analyses[-1]
     result = pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
+    result = result[~result.element.map(is_ignored_element)].copy()
     element_order = []
     for analysis in st.session_state.analyses:
         source_elements = analysis.get("elements", ordered_unique(analysis["result"].element))
         for element_name in source_elements:
-            if str(element_name) not in element_order:
+            if not is_ignored_element(element_name) and str(element_name) not in element_order:
                 element_order.append(str(element_name))
     st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
     filter_col1, filter_col2 = st.columns(2)
