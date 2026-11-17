@@ -383,7 +383,12 @@ def main():
         element = st.selectbox("Elemento", sorted(result.element.unique()), label_visibility="collapsed")
         depth = st.selectbox("Profundidade", sorted(result.depth.unique()), label_visibility="collapsed")
         chart = result[(result.element == element) & (result.depth == depth)].copy()
-        if not chart.empty: st.scatter_chart(chart, x="source_row", y="value", color="status_label", height=280)
+        if not chart.empty:
+            # Evita o import de Altair em tempo de execução, incompatível em
+            # algumas combinações de Streamlit e Python 3.14 no Cloud.
+            chart_plot = chart.pivot_table(index="source_row", columns="status_label", values="value", aggfunc="mean").sort_index()
+            chart_plot = chart_plot.rename(columns={"padrão": "Padrão", "atenção": "Atenção", "outlier 2026": "Outlier 2026"})
+            st.line_chart(chart_plot, height=280, use_container_width=True)
     with c2:
         st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
