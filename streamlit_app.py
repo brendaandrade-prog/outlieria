@@ -176,6 +176,10 @@ def classify(sample: pd.DataFrame, elements: list[str]) -> tuple[pd.DataFrame, p
     results, evidence, attention = [], [], []
     for idx, row in current.iterrows():
         for element in elements:
+            # Segurança adicional: mesmo que uma planilha ou sessão antiga
+            # carregue uma dessas colunas, ela nunca entra nos resultados.
+            if str(element).strip().upper() in IGNORED_COLUMNS:
+                continue
             value = row.get(element)
             if pd.isna(value):
                 continue
