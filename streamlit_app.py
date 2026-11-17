@@ -256,6 +256,11 @@ def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal"})
 
 
+def ordered_unique(values: pd.Series) -> list[str]:
+    """Retorna os valores na ordem em que aparecem na planilha, sem ordenar."""
+    return list(dict.fromkeys(str(value) for value in values.dropna().tolist()))
+
+
 def render_scatter(result: pd.DataFrame) -> None:
     """Renderiza dispersão em SVG, sem Altair, Plotly ou dependências de gráfico."""
     points = result.dropna(subset=["source_row", "value"]).copy()
@@ -443,8 +448,8 @@ def main():
     c1, c2 = st.columns([3,1])
     with c1:
         st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
-        element_options = sorted(result.element.dropna().astype(str).unique().tolist()) or ["Sem dados"]
-        depth_options = sorted(result.depth.dropna().astype(str).unique().tolist()) or ["Sem dados"]
+        element_options = ordered_unique(result.element) or ["Sem dados"]
+        depth_options = ordered_unique(result.depth) or ["Sem dados"]
         element = st.selectbox("Elemento", element_options, label_visibility="collapsed")
         depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
         chart = result[(result.element == element) & (result.depth == depth)].copy()
@@ -461,7 +466,7 @@ def main():
     with header_filters[2]:
         selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
     with header_filters[3]:
-        selected_element = st.selectbox("Elemento", ["Todos"] + sorted(table.element.dropna().astype(str).unique().tolist()), key="table_filter_element", label_visibility="collapsed")
+        selected_element = st.selectbox("Elemento", ["Todos"] + ordered_unique(table.element), key="table_filter_element", label_visibility="collapsed")
     if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
     if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
     if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
