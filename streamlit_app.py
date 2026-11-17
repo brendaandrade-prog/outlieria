@@ -303,7 +303,7 @@ def main():
     st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
     if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
+        c1, c2, _ = st.columns([1, 1, 2])
         with c1: excel = st.file_uploader("Inserir planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Inserir limite SHP", type=["shp"], key="shp")
         st.markdown("<p class='lead' style='font-size:12px'>A fazenda e o cliente são lidos diretamente da planilha. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
