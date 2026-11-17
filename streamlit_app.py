@@ -234,6 +234,7 @@ def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
     sheet = workbook[CURRENT_YEAR]
     headers = {str(cell.value or "").strip().lower(): cell.column for cell in sheet[1]}
     fill = PatternFill("solid", fgColor="F6B26B")
+    evidence = evidence[~evidence.element.map(is_ignored_element)].copy()
     for _, item in evidence.iterrows():
         column = headers.get(str(item.element).strip().lower())
         if not column:
@@ -249,7 +250,7 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
     rows = []
     coverage = {}
     for analysis_index, (result, polygons) in enumerate(all_results):
-        result = result[(result.depth == "0-10 cm") & result.value.notna()].copy()
+        result = result[(~result.element.map(is_ignored_element)) & (result.depth == "0-10 cm") & result.value.notna()].copy()
         for _, row in result.iterrows():
             area = row.municipality if row.municipality != "Não localizado" else "Não localizado"
             state = row.state if row.state != "Não localizado" else "Não localizado"
