@@ -26,6 +26,26 @@ IQR_MULTIPLIER = 1.5
 ATTENTION_MARGIN = 0.10
 IGNORED_COLUMNS = {"A", "B", "G", "H", "S", "T", "U", "V", "W"}
 IGNORED_FROM_INDEX = 28  # AC, zero based
+ELEMENT_LABELS = {
+    "PH": "pH",
+    "SMP": "Índice SMP",
+    "P": "Fósforo",
+    "K": "Potássio",
+    "MO": "Matéria orgânica",
+    "AL": "Alumínio",
+    "CA": "Cálcio",
+    "MG": "Magnésio",
+    "H+Al": "Hidrogênio + alumínio",
+    "CTC Efetiva": "CTC efetiva",
+    "CTC": "Capacidade de troca catiônica",
+    "SB": "Soma de bases",
+    "SA": "Saturação por alumínio",
+    "ZN": "Zinco",
+    "CU": "Cobre",
+    "B": "Boro",
+    "MN": "Manganês",
+    "Argila": "Argila",
+}
 
 @dataclass
 class PolygonRecord:
@@ -253,12 +273,18 @@ def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
     frame = result[[c for c in columns if c in result.columns]].copy()
     if "value" in frame.columns:
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
+    if "element" in frame.columns:
+        frame["element"] = frame["element"].map(element_label)
     return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal"})
 
 
 def ordered_unique(values: pd.Series) -> list[str]:
     """Retorna os valores na ordem em que aparecem na planilha, sem ordenar."""
     return list(dict.fromkeys(str(value) for value in values.dropna().tolist()))
+
+
+def element_label(value: object) -> str:
+    return ELEMENT_LABELS.get(str(value), str(value))
 
 
 def render_scatter(result: pd.DataFrame) -> None:
@@ -455,7 +481,7 @@ def main():
         st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
         element_options = element_order or ["Sem dados"]
         depth_options = ordered_unique(result.depth) or ["Sem dados"]
-        element = st.selectbox("Elemento", element_options, label_visibility="collapsed")
+        element = st.selectbox("Elemento", element_options, format_func=element_label, label_visibility="collapsed")
         depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
         chart = result[(result.element == element) & (result.depth == depth)].copy()
         if not chart.empty:
@@ -471,7 +497,7 @@ def main():
     with header_filters[2]:
         selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
     with header_filters[3]:
-            selected_element = st.selectbox("Elemento", ["Todos"] + element_order, key="table_filter_element", label_visibility="collapsed")
+            selected_element = st.selectbox("Elemento", ["Todos"] + element_order, key="table_filter_element", format_func=lambda value: "Todos" if value == "Todos" else element_label(value), label_visibility="collapsed")
     if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
     if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
     if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
