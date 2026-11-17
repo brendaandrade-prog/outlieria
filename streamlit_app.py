@@ -322,6 +322,10 @@ def inject_style():
     .rail-caption { color:#9aa9a0; font:600 10px 'IBM Plex Mono',monospace; letter-spacing:.12em; text-transform:uppercase; margin:8px 0; }
     .scope { border:1px solid #315355; border-radius:9px; padding:9px; margin-top:14px; } .scope strong{display:block;font-size:16px}.scope span{color:#9aa9a0;font:10px 'IBM Plex Mono',monospace;}
     .topbar { border-bottom:1px solid var(--line); padding:2px 0 12px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; }
+    .tab-loading { display:inline-flex; align-items:center; gap:7px; color:#9b6a3e; font:600 9px 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.08em; animation:tab-loading-fade 1.35s ease-out forwards; }
+    .tab-loading-dot { width:10px; height:10px; border:2px solid #d7dfbe; border-top-color:#9caf4b; border-radius:50%; animation:tab-loading-spin .7s linear infinite; }
+    @keyframes tab-loading-spin { to { transform:rotate(360deg); } }
+    @keyframes tab-loading-fade { 0%,65% { opacity:1; } 100% { opacity:0; } }
     .eyebrow,.mono { font:600 10px 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.10em; color:#b16e35; }
     h1 { font-size:42px !important; line-height:.98 !important; letter-spacing:-.055em; margin:10px 0 !important; color:var(--ink); } h1 em { color:#87978d; font-style:normal; }
     .lead { color:#747a73; max-width:560px; font-size:12px; }
@@ -357,7 +361,7 @@ def main():
         st.markdown("<div class='rail-caption'>análise agrícola</div>", unsafe_allow_html=True)
         page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
         st.markdown("<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · 300 m</span></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
     if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
         c1, c2, _ = st.columns([1.25, 1.25, 1.5])
