@@ -263,12 +263,22 @@ def render_scatter(result: pd.DataFrame) -> None:
     left, right, top, bottom = 48, 16, 18, 38
     x_values = pd.to_numeric(points["source_row"], errors="coerce").fillna(0).to_numpy(dtype=float)
     y_values = pd.to_numeric(points["value"], errors="coerce").to_numpy(dtype=float)
-    x_min, x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
-    y_min, y_max = float(np.nanmin(y_values)), float(np.nanmax(y_values))
-    if x_min == x_max: x_max = x_min + 1
-    if y_min == y_max: y_max = y_min + 1
+    raw_x_min, raw_x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
+    raw_y_min, raw_y_max = float(np.nanmin(y_values)), float(np.nanmax(y_values))
+    axis_steps = [0.5, 1, 3, 5, 10, 25]
+    def rounded_axis(raw_min, raw_max):
+        span = max(raw_max - raw_min, 0.5)
+        step = min(axis_steps, key=lambda candidate: abs(candidate - span / 4))
+        axis_min = math.floor(raw_min / step) * step
+        axis_max = math.ceil(raw_max / step) * step
+        if axis_min == axis_max: axis_max = axis_min + step
+        return axis_min, axis_max, step
+    x_min, x_max, x_step = rounded_axis(raw_x_min, raw_x_max)
+    y_min, y_max, y_step = rounded_axis(raw_y_min, raw_y_max)
     def sx(x): return left + ((x - x_min) / (x_max - x_min)) * (width - left - right)
     def sy(y): return top + ((y_max - y) / (y_max - y_min)) * (height - top - bottom)
+    def tick_text(value, step):
+        return f"{value:.1f}" if step == 0.5 else f"{value:.0f}"
     colors = {"outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
     circles = []
     for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
@@ -278,16 +288,16 @@ def render_scatter(result: pd.DataFrame) -> None:
         point_id = html.escape(str(row.get("point_id", row.get("source_row", ""))))
         circles.append(f'<g class="outlieria-point"><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><g class="point-tooltip"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="148" height="34" rx="5" fill="#ffffff" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {y:.2f}</text></g></g>')
     grid_parts = []
-    for i in range(5):
-        fraction = i / 4
+    y_ticks = np.arange(y_min, y_max + y_step * 0.01, y_step)
+    for y_tick in y_ticks:
+        fraction = (y_max - y_tick) / (y_max - y_min)
         gy = top + fraction * (height - top - bottom)
-        y_tick = y_max - fraction * (y_max - y_min)
-        grid_parts.append(f'<line x1="{left}" x2="{width-right}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#e5e8df" stroke-width="1"/><text x="{left - 7}" y="{gy + 3:.1f}" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{y_tick:.2f}</text>')
-    for i in range(5):
-        fraction = i / 4
+        grid_parts.append(f'<line x1="{left}" x2="{width-right}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#e5e8df" stroke-width="1"/><text x="{left - 7}" y="{gy + 3:.1f}" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{tick_text(y_tick, y_step)}</text>')
+    x_ticks = np.arange(x_min, x_max + x_step * 0.01, x_step)
+    for x_tick in x_ticks:
+        fraction = (x_tick - x_min) / (x_max - x_min)
         gx = left + fraction * (width - left - right)
-        x_tick = x_min + fraction * (x_max - x_min)
-        grid_parts.append(f'<text x="{gx:.1f}" y="{height - bottom + 17}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{x_tick:.0f}</text>')
+        grid_parts.append(f'<text x="{gx:.1f}" y="{height - bottom + 17}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{tick_text(x_tick, x_step)}</text>')
     grid = "".join(grid_parts)
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="10"><circle cx="55" cy="265" r="4" fill="#487c80"/><text x="64" y="269" fill="#6f7c76">padrão</text><circle cx="140" cy="265" r="4" fill="#b79b43"/><text x="149" y="269" fill="#6f7c76">atenção</text><circle cx="225" cy="265" r="4" fill="#d8793e"/><text x="234" y="269" fill="#6f7c76">outlier 2026</text></g>'
     st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.outlieria-point .point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s}}.outlieria-point:hover .point-tooltip{{opacity:1}}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
