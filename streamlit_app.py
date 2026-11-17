@@ -476,7 +476,7 @@ def main():
     st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
     if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([1.25, 1.25, 1.0])
+        c1, c2, c3 = st.columns([1.25, 1.25, 1.25])
         with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
         with c3:
