@@ -323,7 +323,20 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
         municipality.to_excel(writer, index=False, sheet_name="Médias Município")
         state.to_excel(writer, index=False, sheet_name="Médias Estado", startrow=0, startcol=0)
         coverage_frame.to_excel(writer, index=False, sheet_name="Médias Estado", startrow=0, startcol=len(state.columns) + 2)
-    return output.getvalue()
+    formatted = load_workbook(io.BytesIO(output.getvalue()))
+    for sheet_name in ["Médias Município", "Médias Estado"]:
+        sheet = formatted[sheet_name]
+        for row in sheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "0.00"
+    state_sheet = formatted["Médias Estado"]
+    coverage_start = len(state.columns) + 3
+    for row in range(2, state_sheet.max_row + 1):
+        state_sheet.cell(row, coverage_start + 1).number_format = "0"
+        state_sheet.cell(row, coverage_start + 2).number_format = "0.00"
+    final_output = io.BytesIO(); formatted.save(final_output)
+    return final_output.getvalue()
 
 
 @st.cache_data(show_spinner=False)
