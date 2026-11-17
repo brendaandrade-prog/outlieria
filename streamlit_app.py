@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import html
+import gzip
+import json
 import math
 import os
 import unicodedata
@@ -11,7 +13,6 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
-import requests
 import shapefile
 import streamlit as st
 from openpyxl import load_workbook
@@ -55,6 +56,15 @@ class PolygonRecord:
     area_ha: float
 
 
+@dataclass
+class IBGEMunicipality:
+    geometry: object
+    municipality: str
+    state: str
+    state_code: str
+    bounds: tuple[float, float, float, float]
+
+
 def haversine(lon1, lat1, lon2, lat2):
     r = 6_371_000.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
@@ -85,6 +95,27 @@ def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
         geometry = shapely_shape(shp.__geo_interface__)
         records.append(PolygonRecord(geometry, polygon_area_ha(geometry)))
     return records
+
+
+@st.cache_resource(show_spinner=False)
+def load_ibge_municipalities() -> list[IBGEMunicipality]:
+    path = os.path.join(os.path.dirname(__file__), "data", "ibge", "ibge_municipios_2025.geojson.gz")
+    if not os.path.exists(path):
+        return []
+    with gzip.open(path, "rt", encoding="utf-8") as source:
+        collection = json.load(source)
+    boundaries = []
+    for feature in collection.get("features", []):
+        geometry = shapely_shape(feature["geometry"])
+        props = feature.get("properties", {})
+        boundaries.append(IBGEMunicipality(
+            geometry=geometry,
+            municipality=str(props.get("NM_MUN") or "Não localizado"),
+            state=str(props.get("NM_UF") or "Não localizado"),
+            state_code=str(props.get("SIGLA_UF") or ""),
+            bounds=geometry.bounds,
+        ))
+    return boundaries
 
 
 def find_header_row(rows: list[list[object]]) -> int:
@@ -214,17 +245,17 @@ def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
     result = rows.copy()
     result["municipality"] = "Não localizado"
     result["state"] = "Não localizado"
-    url = os.getenv("IBGE_REVERSE_URL")
-    if not url:
+    boundaries = load_ibge_municipalities()
+    if not boundaries:
         return result
     for index, row in result.iterrows():
-        try:
-            response = requests.get(url, params={"lat": row.latitude, "lon": row.longitude}, timeout=8)
-            payload = response.json()
-            result.at[index, "municipality"] = payload.get("municipality", payload.get("municipio", "Não localizado"))
-            result.at[index, "state"] = payload.get("state", payload.get("estado", "Não localizado"))
-        except Exception:
-            continue
+        point = Point(float(row.longitude), float(row.latitude))
+        for boundary in boundaries:
+            minx, miny, maxx, maxy = boundary.bounds
+            if minx <= point.x <= maxx and miny <= point.y <= maxy and (boundary.geometry.contains(point) or boundary.geometry.touches(point)):
+                result.at[index, "municipality"] = boundary.municipality
+                result.at[index, "state"] = boundary.state
+                break
     return result
 
 
