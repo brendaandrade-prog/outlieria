@@ -198,6 +198,7 @@ def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+@st.cache_data(show_spinner=False)
 def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
     workbook = load_workbook(io.BytesIO(original))
     sheet = workbook[CURRENT_YEAR]
@@ -246,6 +247,7 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
     return output.getvalue()
 
 
+@st.cache_data(show_spinner=False)
 def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
     columns = ["point_id", "crop", "depth", "element", "value", "status"]
     frame = result[[c for c in columns if c in result.columns]].copy()
