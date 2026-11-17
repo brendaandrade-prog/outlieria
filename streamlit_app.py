@@ -232,6 +232,16 @@ def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
 def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
     workbook = load_workbook(io.BytesIO(original))
     sheet = workbook[CURRENT_YEAR]
+    # Snapshot explícito: as colunas excluídas permanecem com os valores
+    # originais, mesmo quando o restante da planilha recebe destaques.
+    original_workbook = load_workbook(io.BytesIO(original), data_only=False)
+    original_sheet = original_workbook[CURRENT_YEAR]
+    excluded_columns = list(range(19, 24)) + list(range(29, original_sheet.max_column + 1))  # S–W e AC+
+    original_values = {
+        (row, column): original_sheet.cell(row, column).value
+        for row in range(1, original_sheet.max_row + 1)
+        for column in excluded_columns
+    }
     headers = {str(cell.value or "").strip().lower(): cell.column for cell in sheet[1]}
     fill = PatternFill("solid", fgColor="F6B26B")
     evidence = evidence[~evidence.element.map(is_ignored_element)].copy()
@@ -243,6 +253,8 @@ def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
         cell.fill = fill
         cell.font = Font(name=cell.font.name, sz=cell.font.sz, bold=True, color="7A2E00")
         cell.comment = Comment(f"OUTLIER 2026 comparado ao histórico regional de 300 m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.", "Outlieria")
+    for (row, column), value in original_values.items():
+        sheet.cell(row, column).value = value
     output = io.BytesIO(); workbook.save(output); return output.getvalue()
 
 
