@@ -345,7 +345,7 @@ def inject_style():
     .chart-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:10px; }.chart-title{font-weight:700;font-size:15px}.chart-sub{font:10px 'IBM Plex Mono',monospace;color:#8a8e87;text-transform:uppercase}
     .source-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:13px; margin:7px 0; }
     .source-card h3{margin:0 0 5px}.source-card p{color:#7c8179;font-size:12px}.source-count{color:#849069;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase}
-    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { min-height:32px !important; padding:6px 10px !important; border-radius:7px !important; font-size:11px !important; font-weight:600 !important; } [data-testid='stFileUploader'] section { padding:2px 5px !important; min-height:46px !important; height:46px !important; border-radius:7px !important; } [data-testid='stFileUploader'] section > div { min-height:40px !important; padding:0 !important; } [data-testid='stFileUploader'] button { padding:3px 7px !important; font-size:10px !important; } [data-testid='stFileUploader'] small { font-size:9px !important; } [data-testid='stFileUploader'] label { font-size:10px !important; } [data-testid='stFileUploaderDropzoneInstructions'] { font-size:9px !important; line-height:1.1 !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; } [data-testid='stSelectbox'] > div > div { min-height:32px !important; height:32px !important; border-radius:7px !important; background:#fffdf8 !important; border-color:var(--line) !important; } [data-testid='stSelectbox'] label, .stRadio label { font-size:10px !important; } [data-testid='stVerticalBlock'] { gap:0.45rem; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
+    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { min-height:32px !important; padding:6px 10px !important; border-radius:7px !important; font-size:11px !important; font-weight:600 !important; } [data-testid='stFileUploader'] section { padding:2px 5px !important; min-height:46px !important; height:46px !important; border-radius:7px !important; } [data-testid='stFileUploader'] section > div { min-height:40px !important; padding:0 !important; } [data-testid='stFileUploader'] button { padding:3px 7px !important; font-size:10px !important; } [data-testid='stFileUploader'] small { font-size:9px !important; } [data-testid='stFileUploader'] label { font-size:10px !important; } [data-testid='stFileUploaderDropzoneInstructions'] { font-size:9px !important; line-height:1.1 !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; } [data-testid='stSelectbox'] > div > div { min-height:32px !important; height:32px !important; border-radius:7px !important; background:#fffdf8 !important; border-color:var(--line) !important; } [data-testid='stSelectbox'] label, .stRadio label { font-size:10px !important; } [data-testid='stVerticalBlock'] { gap:0.45rem; } .table-header-selects [data-testid='stSelectbox'] > div > div { min-width:34px !important; width:42px !important; padding:0 4px !important; border-color:transparent !important; background:transparent !important; } .table-header-selects [data-testid='stSelectbox'] [data-baseweb='select'] > div:first-child { overflow:hidden !important; white-space:nowrap !important; color:transparent !important; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
     </style>
     """, unsafe_allow_html=True)
 
@@ -452,16 +452,18 @@ def main():
             render_scatter(chart)
     with c2:
         st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
     table = result[result.status == "outlier"].copy()
-    # Estado visual original da tabela nativa; os três selects permanecem como filtros.
-    header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
-    with header_filters[1]:
-        selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
-    with header_filters[2]:
-        selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
-    with header_filters[3]:
-        selected_element = st.selectbox("Elemento", ["Todos"] + sorted(table.element.dropna().astype(str).unique().tolist()), key="table_filter_element", label_visibility="collapsed")
+    header_title, header_controls = st.columns([2.2, 1.8])
+    with header_title:
+        st.markdown("<div class='section-head' style='margin:20px 0 7px'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
+    with header_controls:
+        header_filters = st.columns(3, gap="small")
+        with header_filters[0]:
+            selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
+        with header_filters[1]:
+            selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
+        with header_filters[2]:
+            selected_element = st.selectbox("Elemento", ["Todos"] + sorted(table.element.dropna().astype(str).unique().tolist()), key="table_filter_element", label_visibility="collapsed")
     if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
     if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
     if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
