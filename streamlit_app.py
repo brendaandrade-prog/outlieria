@@ -247,11 +247,11 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
 
 
 def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
-    columns = ["source_row", "point_id", "crop", "depth", "element", "value", "status"]
+    columns = ["point_id", "crop", "depth", "element", "value", "status"]
     frame = result[[c for c in columns if c in result.columns]].copy()
     if "value" in frame.columns:
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
-    return frame.rename(columns={"source_row": "linha", "point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal"})
+    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal"})
 
 
 def render_scatter(result: pd.DataFrame) -> None:
@@ -273,12 +273,13 @@ def render_scatter(result: pd.DataFrame) -> None:
     circles = []
     for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
         status = str(row.get("status", "normal")); color = colors.get(status, "#487c80")
-        label = html.escape(f"Ponto {row.get('point_id', row.get('source_row', ''))} · valor {y:.2f}")
         px, py = sx(x), sy(y)
-        circles.append(f'<g><title>{label}</title><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><text x="{px + 6:.1f}" y="{py - 6:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">{y:.2f}</text></g>')
+        tooltip_x, tooltip_y = min(px + 9, width - 158), max(py - 42, 5)
+        point_id = html.escape(str(row.get("point_id", row.get("source_row", ""))))
+        circles.append(f'<g class="outlieria-point"><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><g class="point-tooltip"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="148" height="34" rx="5" fill="#ffffff" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {y:.2f}</text></g></g>')
     grid = "".join(f'<line x1="{left}" x2="{width-right}" y1="{top + i*55}" y2="{top + i*55}" stroke="#e5e8df" stroke-width="1"/>' for i in range(5))
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="10"><circle cx="55" cy="265" r="4" fill="#487c80"/><text x="64" y="269" fill="#6f7c76">padrão</text><circle cx="140" cy="265" r="4" fill="#b79b43"/><text x="149" y="269" fill="#6f7c76">atenção</text><circle cx="225" cy="265" r="4" fill="#d8793e"/><text x="234" y="269" fill="#6f7c76">outlier 2026</text></g>'
-    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão">{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.outlieria-point .point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s}}.outlieria-point:hover .point-tooltip{{opacity:1}}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
 
 
 def inject_style():
@@ -422,12 +423,12 @@ def main():
     table = result[result.status == "outlier"].copy()
     # Os três selects ficam na mesma grade das colunas correspondentes da tabela.
     # Não há uma barra de filtros separada nem opções para exibir pontos normais.
-    header_filters = st.columns([1.0, 1.0, 1.35, 1.2, 1.2, 1.0, 0.9])
-    with header_filters[2]:
+    header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
+    with header_filters[1]:
         selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
-    with header_filters[3]:
+    with header_filters[2]:
         selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
-    with header_filters[4]:
+    with header_filters[3]:
         selected_element = st.selectbox("Elemento", ["Todos"] + sorted(table.element.dropna().astype(str).unique().tolist()), key="table_filter_element", label_visibility="collapsed")
     if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
     if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
