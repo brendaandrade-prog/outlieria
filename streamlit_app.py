@@ -418,29 +418,33 @@ def main():
         st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
         st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
         return
-    current = st.session_state.analyses[-1]; result = current["result"].copy()
+    current = st.session_state.analyses[-1]
+    result = pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
     st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
     filter_col1, filter_col2 = st.columns(2)
     client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
     with filter_col1:
         selected_client = st.selectbox("Cliente", client_options, key="analysis_client")
-    farm_source = result if selected_client == "Todos" else result[result.client.astype(str) == selected_client]
-    farm_options = ["Todos"] + sorted(farm_source.farm.dropna().astype(str).unique().tolist())
+    farm_source = result[result.client.astype(str) == selected_client] if selected_client != "Todos" else result.iloc[0:0]
+    farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Todas"] + sorted(farm_source.farm.dropna().astype(str).unique().tolist())
     with filter_col2:
-        selected_farm = st.selectbox("Fazenda", farm_options, key="analysis_farm")
+        selected_farm = st.selectbox("Fazenda", farm_options, key="analysis_farm", disabled=selected_client == "Todos")
     if selected_client != "Todos": result = result[result.client.astype(str) == selected_client]
-    if selected_farm != "Todos": result = result[result.farm.astype(str) == selected_farm]
+    if selected_client != "Todos" and selected_farm != "Todas": result = result[result.farm.astype(str) == selected_farm]
     result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='file-strip'><div style='font-size:22px'>▣</div><div><strong>{current['name']}</strong><span>aba analisada: 2026 · {result.state.iloc[0] if 'state' in result else 'localização pendente'}</span></div><span class='badge'>● RECORTE ATUALIZADO</span></div>", unsafe_allow_html=True)
+    selected_state = result.state.dropna().iloc[0] if not result.empty and "state" in result and not result.state.dropna().empty else "localização pendente"
+    st.markdown(f"<div class='file-strip'><div style='font-size:22px'>▣</div><div><strong>{current['name']}</strong><span>aba analisada: 2026 · {selected_state}</span></div><span class='badge'>● RECORTE ATUALIZADO</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de 300 m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'próximos das cercas IQR', 'sand')}{html_stat('outliers 2026', outliers, 'somente no último ano', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
         st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
-        element = st.selectbox("Elemento", sorted(result.element.unique()), label_visibility="collapsed")
-        depth = st.selectbox("Profundidade", sorted(result.depth.unique()), label_visibility="collapsed")
+        element_options = sorted(result.element.dropna().astype(str).unique().tolist()) or ["Sem dados"]
+        depth_options = sorted(result.depth.dropna().astype(str).unique().tolist()) or ["Sem dados"]
+        element = st.selectbox("Elemento", element_options, label_visibility="collapsed")
+        depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
         chart = result[(result.element == element) & (result.depth == depth)].copy()
         if not chart.empty:
             render_scatter(chart)
