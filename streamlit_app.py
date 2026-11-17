@@ -255,6 +255,11 @@ def export_individual(original: bytes, evidence: pd.DataFrame) -> bytes:
         cell.comment = Comment(f"OUTLIER 2026 comparado ao histórico regional de 300 m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.", "Outlieria")
     for (row, column), value in original_values.items():
         sheet.cell(row, column).value = value
+    # As colunas preservadas podem conter fórmulas; solicite ao Excel/LibreOffice
+    # o recálculo para que os valores calculados não apareçam vazios ao abrir.
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    workbook.calculation.calcMode = "auto"
     output = io.BytesIO(); workbook.save(output); return output.getvalue()
 
 
