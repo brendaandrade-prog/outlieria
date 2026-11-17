@@ -253,30 +253,30 @@ def inject_style():
     [data-testid='stSidebar'] * { color:#f7f4eb; }
     [data-testid='stSidebar'] .stRadio label { border-radius:10px; padding:10px 12px; margin:3px 0; font-weight:600; }
     [data-testid='stSidebar'] .stRadio label:hover { background:#23474a; }
-    .brand { display:flex; align-items:center; gap:10px; padding:8px 0 28px; color:#f7f4eb; font-weight:700; font-size:18px; }
-    .brand-mark { width:24px; height:24px; border:3px solid var(--lime); border-right-color:transparent; border-radius:50%; position:relative; }
+    .brand { display:flex; align-items:center; gap:8px; padding:5px 0 18px; color:#f7f4eb; font-weight:700; font-size:16px; }
+    .brand-mark { width:20px; height:20px; border:3px solid var(--lime); border-right-color:transparent; border-radius:50%; position:relative; }
     .brand-mark:after { content:''; position:absolute; width:5px; height:5px; background:var(--lime); border-radius:50%; right:-3px; top:1px; }
     .rail-caption { color:#9aa9a0; font:600 10px 'IBM Plex Mono',monospace; letter-spacing:.12em; text-transform:uppercase; margin:8px 0; }
-    .scope { border:1px solid #315355; border-radius:9px; padding:12px; margin-top:18px; } .scope strong{display:block;font-size:18px}.scope span{color:#9aa9a0;font:10px 'IBM Plex Mono',monospace;}
-    .topbar { border-bottom:1px solid var(--line); padding:5px 0 18px; margin-bottom:26px; display:flex; justify-content:space-between; align-items:center; }
+    .scope { border:1px solid #315355; border-radius:9px; padding:9px; margin-top:14px; } .scope strong{display:block;font-size:16px}.scope span{color:#9aa9a0;font:10px 'IBM Plex Mono',monospace;}
+    .topbar { border-bottom:1px solid var(--line); padding:2px 0 12px; margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; }
     .eyebrow,.mono { font:600 10px 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.10em; color:#b16e35; }
-    h1 { font-size:52px !important; line-height:.98 !important; letter-spacing:-.055em; margin:14px 0 !important; color:var(--ink); } h1 em { color:#87978d; font-style:normal; }
-    .lead { color:#747a73; max-width:560px; font-size:15px; }
-    .rule-panel { background:#f0f8de; border:1px solid #d3e3a7; border-radius:15px; padding:20px; margin:22px 0; }
-    .rule-title { display:flex; justify-content:space-between; font-weight:700; font-size:20px; margin-bottom:16px; }
+    h1 { font-size:42px !important; line-height:.98 !important; letter-spacing:-.055em; margin:10px 0 !important; color:var(--ink); } h1 em { color:#87978d; font-style:normal; }
+    .lead { color:#747a73; max-width:560px; font-size:12px; }
+    .rule-panel { background:#f0f8de; border:1px solid #d3e3a7; border-radius:15px; padding:14px; margin:15px 0; }
+    .rule-title { display:flex; justify-content:space-between; font-weight:700; font-size:16px; margin-bottom:10px; }
     .rule-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
-    .rule-item { background:#f8faef; border:1px solid #e3e9d4; border-radius:10px; padding:13px; min-height:100px; }
-    .rule-num { color:#9aa85f; font:600 11px 'IBM Plex Mono',monospace; } .rule-item strong{display:block;margin:8px 0 5px;font-size:13px}.rule-item p{margin:0;color:#7d8479;font-size:11px;line-height:1.35}
-    .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:18px 0; }
-    .stat { border:1px solid var(--line); border-radius:12px; padding:16px; min-height:105px; background:#fffdf7; }.stat.blue{background:#e7f3f7}.stat.lime{background:#e8f8bd}.stat.orange{background:#fff0df}.stat.sand{background:#f2eee3}
-    .stat-label { font:600 10px 'IBM Plex Mono',monospace; color:#77827a; text-transform:uppercase; }.stat-value{font:700 29px 'IBM Plex Mono',monospace;margin:13px 0 2px}.stat-note{font-size:11px;color:#7c8179}
-    .section-head { display:flex; justify-content:space-between; align-items:end; margin:28px 0 10px; }.section-head h2{font-size:24px;margin:5px 0}.section-kicker{font:600 10px 'IBM Plex Mono',monospace;color:#9b6a3e;text-transform:uppercase;letter-spacing:.08em}
-    .file-strip { display:flex; gap:12px; align-items:center; background:#fffdf8; border:1px solid var(--line); border-radius:11px; padding:14px; margin:18px 0; }.file-strip strong{font-size:13px}.file-strip span{display:block;color:#8b8e85;font:10px 'IBM Plex Mono',monospace;margin-top:4px}
+    .rule-item { background:#f8faef; border:1px solid #e3e9d4; border-radius:10px; padding:10px; min-height:78px; }
+    .rule-num { color:#9aa85f; font:600 11px 'IBM Plex Mono',monospace; } .rule-item strong{display:block;margin:5px 0 3px;font-size:12px}.rule-item p{margin:0;color:#7d8479;font-size:10px;line-height:1.25}
+    .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:9px; margin:13px 0; }
+    .stat { border:1px solid var(--line); border-radius:12px; padding:11px; min-height:82px; background:#fffdf7; }.stat.blue{background:#e7f3f7}.stat.lime{background:#e8f8bd}.stat.orange{background:#fff0df}.stat.sand{background:#f2eee3}
+    .stat-label { font:600 10px 'IBM Plex Mono',monospace; color:#77827a; text-transform:uppercase; }.stat-value{font:700 23px 'IBM Plex Mono',monospace;margin:8px 0 1px}.stat-note{font-size:10px;color:#7c8179}
+    .section-head { display:flex; justify-content:space-between; align-items:end; margin:20px 0 7px; }.section-head h2{font-size:20px;margin:4px 0}.section-kicker{font:600 10px 'IBM Plex Mono',monospace;color:#9b6a3e;text-transform:uppercase;letter-spacing:.08em}
+    .file-strip { display:flex; gap:9px; align-items:center; background:#fffdf8; border:1px solid var(--line); border-radius:11px; padding:10px; margin:13px 0; }.file-strip strong{font-size:12px}.file-strip span{display:block;color:#8b8e85;font:10px 'IBM Plex Mono',monospace;margin-top:4px}
     .badge { background:#e8f6c5; color:#55701b; border-radius:30px; padding:6px 10px; font:600 10px 'IBM Plex Mono',monospace; margin-left:auto; }
-    .chart-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:15px; }.chart-title{font-weight:700;font-size:15px}.chart-sub{font:10px 'IBM Plex Mono',monospace;color:#8a8e87;text-transform:uppercase}
-    .source-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:20px; margin:10px 0; }
-    .source-card h3{margin:0 0 5px}.source-card p{color:#7c8179;font-size:13px}.source-count{color:#849069;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase}
-    @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:38px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
+    .chart-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:10px; }.chart-title{font-weight:700;font-size:15px}.chart-sub{font:10px 'IBM Plex Mono',monospace;color:#8a8e87;text-transform:uppercase}
+    .source-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:13px; margin:7px 0; }
+    .source-card h3{margin:0 0 5px}.source-card p{color:#7c8179;font-size:12px}.source-count{color:#849069;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase}
+    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { padding:7px 11px !important; font-size:12px !important; } [data-testid='stFileUploader'] section { padding:8px !important; } .stSelectbox label, .stRadio label { font-size:12px !important; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
     </style>
     """, unsafe_allow_html=True)
 
@@ -343,7 +343,7 @@ def main():
         element = st.selectbox("Elemento", sorted(result.element.unique()), label_visibility="collapsed")
         depth = st.selectbox("Profundidade", sorted(result.depth.unique()), label_visibility="collapsed")
         chart = result[(result.element == element) & (result.depth == depth)].copy()
-        if not chart.empty: st.scatter_chart(chart, x="source_row", y="value", color="status_label", height=340)
+        if not chart.empty: st.scatter_chart(chart, x="source_row", y="value", color="status_label", height=280)
     with c2:
         st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
