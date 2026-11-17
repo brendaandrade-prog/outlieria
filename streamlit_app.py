@@ -105,7 +105,8 @@ def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
     excluded = {"Registro", "Descrição antiga", "Fazenda", "Longitude", "Latitude", "Área/Lavoura", "Pontos", "ID", "Profundidade"}
     elements = []
     for index, name in enumerate(frame.columns):
-        if index >= IGNORED_FROM_INDEX or name in excluded or name in {"S", "T", "U", "V", "W"}:
+        normalized_name = str(name).strip().upper()
+        if index >= IGNORED_FROM_INDEX or name in excluded or normalized_name in IGNORED_COLUMNS:
             continue
         numeric = pd.to_numeric(frame[name], errors="coerce")
         if numeric.notna().any():
