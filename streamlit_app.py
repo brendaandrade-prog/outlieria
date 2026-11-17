@@ -243,65 +243,119 @@ def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
     return result[[c for c in columns if c in result.columns]].rename(columns={"source_row": "linha", "point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "municipality": "município", "state": "estado", "status": "sinal", "direction": "direção"})
 
 
+def inject_style():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    :root { --ink:#173638; --muted:#7b817a; --lime:#c8f169; --deep:#102d30; --paper:#f7f4eb; --line:#dce1d1; --orange:#c97d38; }
+    .stApp { background:var(--paper); color:var(--ink); font-family:'DM Sans',sans-serif; }
+    [data-testid='stSidebar'] { background:var(--deep); min-width:250px; }
+    [data-testid='stSidebar'] * { color:#f7f4eb; }
+    [data-testid='stSidebar'] .stRadio label { border-radius:10px; padding:10px 12px; margin:3px 0; font-weight:600; }
+    [data-testid='stSidebar'] .stRadio label:hover { background:#23474a; }
+    .brand { display:flex; align-items:center; gap:10px; padding:8px 0 28px; color:#f7f4eb; font-weight:700; font-size:18px; }
+    .brand-mark { width:24px; height:24px; border:3px solid var(--lime); border-right-color:transparent; border-radius:50%; position:relative; }
+    .brand-mark:after { content:''; position:absolute; width:5px; height:5px; background:var(--lime); border-radius:50%; right:-3px; top:1px; }
+    .rail-caption { color:#9aa9a0; font:600 10px 'IBM Plex Mono',monospace; letter-spacing:.12em; text-transform:uppercase; margin:8px 0; }
+    .scope { border:1px solid #315355; border-radius:9px; padding:12px; margin-top:18px; } .scope strong{display:block;font-size:18px}.scope span{color:#9aa9a0;font:10px 'IBM Plex Mono',monospace;}
+    .topbar { border-bottom:1px solid var(--line); padding:5px 0 18px; margin-bottom:26px; display:flex; justify-content:space-between; align-items:center; }
+    .eyebrow,.mono { font:600 10px 'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:.10em; color:#b16e35; }
+    h1 { font-size:52px !important; line-height:.98 !important; letter-spacing:-.055em; margin:14px 0 !important; color:var(--ink); } h1 em { color:#87978d; font-style:normal; }
+    .lead { color:#747a73; max-width:560px; font-size:15px; }
+    .rule-panel { background:#f0f8de; border:1px solid #d3e3a7; border-radius:15px; padding:20px; margin:22px 0; }
+    .rule-title { display:flex; justify-content:space-between; font-weight:700; font-size:20px; margin-bottom:16px; }
+    .rule-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+    .rule-item { background:#f8faef; border:1px solid #e3e9d4; border-radius:10px; padding:13px; min-height:100px; }
+    .rule-num { color:#9aa85f; font:600 11px 'IBM Plex Mono',monospace; } .rule-item strong{display:block;margin:8px 0 5px;font-size:13px}.rule-item p{margin:0;color:#7d8479;font-size:11px;line-height:1.35}
+    .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:18px 0; }
+    .stat { border:1px solid var(--line); border-radius:12px; padding:16px; min-height:105px; background:#fffdf7; }.stat.blue{background:#e7f3f7}.stat.lime{background:#e8f8bd}.stat.orange{background:#fff0df}.stat.sand{background:#f2eee3}
+    .stat-label { font:600 10px 'IBM Plex Mono',monospace; color:#77827a; text-transform:uppercase; }.stat-value{font:700 29px 'IBM Plex Mono',monospace;margin:13px 0 2px}.stat-note{font-size:11px;color:#7c8179}
+    .section-head { display:flex; justify-content:space-between; align-items:end; margin:28px 0 10px; }.section-head h2{font-size:24px;margin:5px 0}.section-kicker{font:600 10px 'IBM Plex Mono',monospace;color:#9b6a3e;text-transform:uppercase;letter-spacing:.08em}
+    .file-strip { display:flex; gap:12px; align-items:center; background:#fffdf8; border:1px solid var(--line); border-radius:11px; padding:14px; margin:18px 0; }.file-strip strong{font-size:13px}.file-strip span{display:block;color:#8b8e85;font:10px 'IBM Plex Mono',monospace;margin-top:4px}
+    .badge { background:#e8f6c5; color:#55701b; border-radius:30px; padding:6px 10px; font:600 10px 'IBM Plex Mono',monospace; margin-left:auto; }
+    .chart-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:15px; }.chart-title{font-weight:700;font-size:15px}.chart-sub{font:10px 'IBM Plex Mono',monospace;color:#8a8e87;text-transform:uppercase}
+    .source-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:20px; margin:10px 0; }
+    .source-card h3{margin:0 0 5px}.source-card p{color:#7c8179;font-size:13px}.source-count{color:#849069;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase}
+    @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:38px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def html_stat(label, value, note, tone=''):
+    return f"<div class='stat {tone}'><div class='stat-label'>{label}</div><div class='stat-value'>{value}</div><div class='stat-note'>{note}</div></div>"
+
+
 def main():
-    st.set_page_config(page_title="Outlieria", page_icon="◌", layout="wide")
-    st.title("Outlieria")
-    st.caption("Detecção de outliers agrícolas: o histórico define os limites; somente 2026 é sinalizado.")
-    if "analyses" not in st.session_state:
-        st.session_state.analyses = []
+    st.set_page_config(page_title="Outlieria", page_icon="◌", layout="wide", initial_sidebar_state="expanded")
+    inject_style()
+    if "analyses" not in st.session_state: st.session_state.analyses = []
     with st.sidebar:
-        st.header("Fontes")
-        excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
-        shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
-        client = st.text_input("Cliente", value="")
-        farm = st.text_input("Fazenda", value="")
-        ready = st.button("Pronto", type="primary", use_container_width=True)
-    if ready:
-        if not excel or not shp:
-            st.error("Envie a planilha Excel e o limite SHP antes de clicar em Pronto.")
+        st.markdown("<div class='brand'><span class='brand-mark'></span><span>outlieria</span></div>", unsafe_allow_html=True)
+        st.markdown("<div class='rail-caption'>análise agrícola</div>", unsafe_allow_html=True)
+        page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
+        st.markdown("<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · 300 m</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
+    if page == "Fontes":
+        st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1: excel = st.file_uploader("Inserir planilha Excel", type=["xlsx", "xls"], key="excel")
+        with c2: shp = st.file_uploader("Inserir limite SHP", type=["shp"], key="shp")
+        c1, c2, c3 = st.columns([1,1,2])
+        with c1: client = st.text_input("Cliente", key="client_input")
+        with c2: farm = st.text_input("Fazenda", key="farm_input")
+        with c3:
+            st.write("")
+            ready = st.button("✓  Pronto", type="primary", use_container_width=True)
+        if ready:
+            if not excel or not shp: st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
+            else:
+                with st.spinner("Processando Excel, SHP, histórico e localização..."):
+                    try:
+                        polygons = read_polygons(shp.getvalue())
+                        sample, elements, _ = parse_workbook(excel.getvalue(), polygons, client, farm)
+                        result, _, _ = classify(sample, elements); result = locate_ibge(result)
+                        evidence = result[result.status == "outlier"].copy(); attention = result[result.status == "atenção"].copy()
+                        st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": polygons})
+                        st.success(f"Aba 2026 atualizada: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
+                    except Exception as exc: st.exception(exc)
+        st.markdown("<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div></div>", unsafe_allow_html=True)
+        if not st.session_state.analyses:
+            st.info("Nenhuma análise processada nesta sessão.")
         else:
-            with st.spinner("Processando Excel, SHP, histórico e localização..."):
-                try:
-                    shp_records = read_polygons(shp.getvalue())
-                    sample, elements, _ = parse_workbook(excel.getvalue(), shp_records, client, farm)
-                    result, evidence, attention = classify(sample, elements)
-                    result = locate_ibge(result)
-                    evidence = result[result.status == "outlier"].copy()
-                    attention = result[result.status == "atenção"].copy()
-                    st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": shp_records})
-                    st.success(f"Análise concluída: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
-                except Exception as exc:
-                    st.exception(exc)
-    if not st.session_state.analyses:
-        st.info("Envie os dois arquivos na barra lateral e clique em Pronto para iniciar.")
+            for analysis in st.session_state.analyses:
+                st.markdown(f"<div class='source-card'><div class='source-count'>fonte registrada</div><h3>{analysis['name']}</h3><p>{len(analysis['evidence'])} outliers · {len(analysis['attention'])} pontos em atenção · planilha e SHP processados</p></div>", unsafe_allow_html=True)
+            current = st.session_state.analyses[-1]
+            st.download_button("Baixar planilha original com outliers destacados", export_individual(current["original"], current["evidence"]), "outlieria_reanalise_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            all_results = [(a["result"], a["polygons"]) for a in st.session_state.analyses]
+            st.download_button("Baixar análises 2026 — médias consolidadas", export_consolidated(all_results), "outlieria_analises_consolidadas_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         return
-    current = st.session_state.analyses[-1]
-    result = current["result"]
-    outlier_count = int((result.status == "outlier").sum())
-    attention_count = int((result.status == "atenção").sum())
-    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]
-    tab_view, tab_sources = st.tabs(["Visão 2026", "Fontes"])
-    with tab_view:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Pontos 2026", points); c2.metric("Outliers 2026", outlier_count); c3.metric("Atenção", attention_count); c4.metric("Profundidade", "0–10 / 10–20 cm")
-        st.subheader("Regra aplicada")
-        st.info("O histórico anterior a 2026 calcula Q1, Q3 e IQR em raio de 300 m. Os valores de 2026 são comparados contra essas cercas, sem misturar profundidades.")
-        element = st.selectbox("Elemento", sorted(result.element.unique()))
-        depth = st.selectbox("Profundidade", sorted(result.depth.unique()))
-        view = result[(result.element == element) & (result.depth == depth)].copy()
-        st.scatter_chart(view, x="source_row", y="value", color="status")
-        mode = st.radio("Inspeção", ["Todos", "Outliers", "Atenção"], horizontal=True)
-        if mode == "Outliers": view = view[view.status == "outlier"]
-        if mode == "Atenção": view = view[view.status == "atenção"]
-        st.dataframe(frame_for_display(view), use_container_width=True, hide_index=True)
-    with tab_sources:
-        st.subheader("Downloads")
-        st.download_button("Baixar planilha original com outliers destacados", export_individual(current["original"], current["evidence"]), "outlieria_reanalise_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        all_results = [(a["result"], a["polygons"]) for a in st.session_state.analyses]
-        st.download_button("Baixar análises 2026 — médias consolidadas", export_consolidated(all_results), "outlieria_analises_consolidadas_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        st.subheader("Análises inseridas")
-        for analysis in st.session_state.analyses:
-            st.write(f"**{analysis['name']}** — {len(analysis['evidence'])} outliers; {len(analysis['attention'])} em atenção")
+    if not st.session_state.analyses:
+        st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
+        st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
+        return
+    current = st.session_state.analyses[-1]; result = current["result"]
+    result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
+    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
+    st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
+    st.markdown(f"<div class='file-strip'><div style='font-size:22px'>▣</div><div><strong>{current['name']}</strong><span>aba analisada: 2026 · {result.state.iloc[0] if 'state' in result else 'localização pendente'}</span></div><span class='badge'>● RECORTE ATUALIZADO</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de 300 m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'próximos das cercas IQR', 'sand')}{html_stat('outliers 2026', outliers, 'somente no último ano', 'orange')}</div>", unsafe_allow_html=True)
+    c1, c2 = st.columns([3,1])
+    with c1:
+        st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
+        element = st.selectbox("Elemento", sorted(result.element.unique()), label_visibility="collapsed")
+        depth = st.selectbox("Profundidade", sorted(result.depth.unique()), label_visibility="collapsed")
+        chart = result[(result.element == element) & (result.depth == depth)].copy()
+        if not chart.empty: st.scatter_chart(chart, x="source_row", y="value", color="status_label", height=340)
+    with c2:
+        st.markdown("<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>300 m</b><br><span class='mono'>raio espacial</span></div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
+    mode = st.radio("Filtrar", ["Todos", "Outliers", "Atenção"], horizontal=True, label_visibility="collapsed")
+    table = result.copy()
+    if mode == "Outliers": table = table[table.status == "outlier"]
+    if mode == "Atenção": table = table[table.status == "atenção"]
+    st.dataframe(frame_for_display(table), use_container_width=True, hide_index=True, height=430)
+
 
 if __name__ == "__main__":
     main()
