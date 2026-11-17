@@ -282,7 +282,7 @@ def inject_style():
     .chart-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:10px; }.chart-title{font-weight:700;font-size:15px}.chart-sub{font:10px 'IBM Plex Mono',monospace;color:#8a8e87;text-transform:uppercase}
     .source-card { background:#fffdf8; border:1px solid var(--line); border-radius:13px; padding:13px; margin:7px 0; }
     .source-card h3{margin:0 0 5px}.source-card p{color:#7c8179;font-size:12px}.source-count{color:#849069;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase}
-    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { padding:7px 11px !important; font-size:12px !important; } [data-testid='stFileUploader'] section { padding:2px 5px !important; min-height:46px !important; height:46px !important; border-radius:7px !important; } [data-testid='stFileUploader'] section > div { min-height:40px !important; padding:0 !important; } [data-testid='stFileUploader'] button { padding:3px 7px !important; font-size:10px !important; } [data-testid='stFileUploader'] small { font-size:9px !important; } [data-testid='stFileUploader'] label { font-size:11px !important; } .stSelectbox label, .stRadio label { font-size:12px !important; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
+    [data-testid='stAppViewContainer'] .main .block-container { max-width:1180px; padding-top:1rem; padding-bottom:1.5rem; } [data-testid='stButton'] button, [data-testid='stDownloadButton'] button { padding:7px 11px !important; font-size:12px !important; } [data-testid='stFileUploader'] section { padding:2px 5px !important; min-height:46px !important; height:46px !important; border-radius:7px !important; } [data-testid='stFileUploader'] section > div { min-height:40px !important; padding:0 !important; } [data-testid='stFileUploader'] button { padding:3px 7px !important; font-size:10px !important; } [data-testid='stFileUploader'] small { font-size:9px !important; } [data-testid='stFileUploader'] label { font-size:10px !important; } [data-testid='stFileUploaderDropzoneInstructions'] { font-size:9px !important; line-height:1.1 !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; } .stSelectbox label, .stRadio label { font-size:12px !important; } @media (max-width:900px){.rule-grid,.stats{grid-template-columns:repeat(2,1fr)} h1{font-size:34px!important}} @media (max-width:600px){.rule-grid,.stats{grid-template-columns:1fr}}
     </style>
     """, unsafe_allow_html=True)
 
@@ -303,9 +303,9 @@ def main():
     st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
     if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
-        c1, c2, _ = st.columns([1, 1, 2])
-        with c1: excel = st.file_uploader("Inserir planilha Excel", type=["xlsx", "xls"], key="excel")
-        with c2: shp = st.file_uploader("Inserir limite SHP", type=["shp"], key="shp")
+        c1, c2, _ = st.columns([1.25, 1.25, 1.5])
+        with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
+        with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
         st.markdown("<p class='lead' style='font-size:12px'>A fazenda e o cliente são lidos diretamente da planilha. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
         action_left, action_right = st.columns([1, 1])
         with action_left:
