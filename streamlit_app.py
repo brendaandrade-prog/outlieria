@@ -391,7 +391,7 @@ def main():
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         result, _, _ = classify(sample, elements); result = locate_ibge(result)
                         evidence = result[result.status == "outlier"].copy(); attention = result[result.status == "atenção"].copy()
-                        st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": polygons})
+                        st.session_state.analyses.append({"name": excel.name, "original": excel.getvalue(), "result": result, "evidence": evidence, "attention": attention, "polygons": polygons, "elements": elements})
                         st.success(f"Aba 2026 atualizada: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
                     except Exception as exc: st.exception(exc)
         st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
@@ -427,6 +427,12 @@ def main():
         return
     current = st.session_state.analyses[-1]
     result = pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
+    element_order = []
+    for analysis in st.session_state.analyses:
+        source_elements = analysis.get("elements", ordered_unique(analysis["result"].element))
+        for element_name in source_elements:
+            if str(element_name) not in element_order:
+                element_order.append(str(element_name))
     st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
     filter_col1, filter_col2 = st.columns(2)
     client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
@@ -447,7 +453,7 @@ def main():
     c1, c2 = st.columns([3,1])
     with c1:
         st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
-        element_options = ordered_unique(result.element) or ["Sem dados"]
+        element_options = element_order or ["Sem dados"]
         depth_options = ordered_unique(result.depth) or ["Sem dados"]
         element = st.selectbox("Elemento", element_options, label_visibility="collapsed")
         depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
@@ -465,7 +471,7 @@ def main():
     with header_filters[2]:
         selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
     with header_filters[3]:
-        selected_element = st.selectbox("Elemento", ["Todos"] + ordered_unique(table.element), key="table_filter_element", label_visibility="collapsed")
+            selected_element = st.selectbox("Elemento", ["Todos"] + element_order, key="table_filter_element", label_visibility="collapsed")
     if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
     if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
     if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
