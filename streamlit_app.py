@@ -36,7 +36,9 @@ MAX_DISTANCE_M = 300.0
 IQR_MULTIPLIER = 1.5
 LOF_THRESHOLD_PERCENTILE = 90.0
 ATTENTION_MARGIN = 0.0
-IGNORED_COLUMNS = {"A", "B", "G", "H", "S", "T", "U", "V", "W"}
+# Posições físicas do Excel, em índice zero: A, B, G, H e S–W.
+# Isso não significa ignorar um elemento cujo cabeçalho seja "S" (Enxofre).
+IGNORED_EXCEL_COLUMN_INDICES = {0, 1, 6, 7, *range(18, 23)}
 IGNORED_FROM_INDEX = 28  # AC, zero based
 IGNORED_ELEMENTS = {"H+AL", "CTC EFETIVA", "CTC", "SB", "SA", "SK", "RELEVO", "SCA", "SMG", "CA/MG"}
 ELEMENT_LABELS = {
@@ -167,7 +169,7 @@ def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
     elements = []
     for index, name in enumerate(frame.columns):
         normalized_name = str(name).strip().upper()
-        if index >= IGNORED_FROM_INDEX or name in excluded or is_ignored_element(name):
+        if index in IGNORED_EXCEL_COLUMN_INDICES or index >= IGNORED_FROM_INDEX or name in excluded or is_ignored_element(name):
             continue
         numeric = pd.to_numeric(frame[name], errors="coerce")
         if numeric.notna().any():
@@ -515,7 +517,7 @@ def element_label(value: object) -> str:
 
 def is_ignored_element(value: object) -> bool:
     normalized = unicodedata.normalize("NFKD", str(value).strip()).encode("ascii", "ignore").decode().upper()
-    return normalized in IGNORED_COLUMNS or normalized in IGNORED_ELEMENTS or normalized.startswith("SATURAC")
+    return normalized in IGNORED_ELEMENTS or normalized.startswith("SATURAC")
 
 
 def render_scatter(result: pd.DataFrame) -> None:
