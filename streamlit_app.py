@@ -21,8 +21,14 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from shapely.geometry import Point, shape as shapely_shape
 from cloud_storage import configured as cloud_storage_configured, persist_analysis
-from sklearn.neighbors import LocalOutlierFactor
-from sklearn.preprocessing import RobustScaler
+try:
+    from sklearn.neighbors import LocalOutlierFactor
+    from sklearn.preprocessing import RobustScaler
+    LOF_AVAILABLE = True
+except ImportError:
+    LocalOutlierFactor = None
+    RobustScaler = None
+    LOF_AVAILABLE = False
 
 YEAR_RE = r"^\d{4}$"
 CURRENT_YEAR = "2026"
@@ -345,6 +351,8 @@ def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: 
 
 def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) -> pd.DataFrame:
     """Treina e aplica LOF por lavoura, profundidade e elemento, sem usar 2026 no treino."""
+    if not LOF_AVAILABLE:
+        raise RuntimeError("O pacote scikit-learn não está instalado. Aguarde o redeploy ou instale as dependências do requirements.txt.")
     historical = sample[sample["year"].astype(str) != CURRENT_YEAR].copy()
     current = sample[sample["year"].astype(str) == CURRENT_YEAR].copy()
     predictions = []
@@ -629,7 +637,9 @@ def main():
         with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
         with c3:
             radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto. Utilize sempre o raio do maior grid para a comparação.", key="radius_m")
-        enable_lof = st.checkbox("Ativar LOF espacial", value=False, help="Usa aprendizado não supervisionado para comparar cada ponto com o histórico da mesma lavoura, elemento e profundidade dentro do raio informado.", key="enable_lof")
+        enable_lof = st.checkbox("Ativar LOF espacial", value=False, disabled=not LOF_AVAILABLE, help="Usa aprendizado não supervisionado para comparar cada ponto com o histórico da mesma lavoura, elemento e profundidade dentro do raio informado.", key="enable_lof")
+        if not LOF_AVAILABLE:
+            st.caption("LOF indisponível até a instalação do scikit-learn pelo requirements.txt.")
         st.markdown("<p class='lead' style='font-size:12px'>O raio informado é aplicado separadamente a cada ponto, mantendo lavoura e profundidade isoladas. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
         action_left, action_right = st.columns([1, 1])
         with action_left:
