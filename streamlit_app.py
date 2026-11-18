@@ -21,6 +21,8 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from shapely.geometry import Point, shape as shapely_shape
 from cloud_storage import configured as cloud_storage_configured, persist_analysis
+from sklearn.neighbors import LocalOutlierFactor
+from sklearn.preprocessing import RobustScaler
 
 YEAR_RE = r"^\d{4}$"
 CURRENT_YEAR = "2026"
@@ -50,6 +52,11 @@ ELEMENT_LABELS = {
     "MN": "Manganês",
     "Argila": "Argila",
 }
+LOF_FEATURES = [
+    "value", "regional_mean", "regional_median", "regional_iqr",
+    "regional_std", "neighbor_count", "mean_distance_m",
+    "nearest_distance_m", "difference_median", "z_score",
+]
 
 @dataclass
 class PolygonRecord:
@@ -247,12 +254,132 @@ def classify(sample: pd.DataFrame, elements: list[str], radius_m: float = MAX_DI
                 margin = abs(iqr) * ATTENTION_MARGIN
                 if not direction and (abs(value - lower) <= margin or abs(value - upper) <= margin):
                     status = "atenção"; direction = "abaixo" if abs(value - lower) < abs(value - upper) else "acima"
-            result = {**row.to_dict(), "element": element, "value": float(value), "status": status, "direction": direction,
+            result = {**row.to_dict(), "sample_index": idx, "element": element, "value": float(value), "status": status, "direction": direction,
                       "historical_mean": mean, "q1": q1, "q3": q3, "iqr": iqr, "lower_fence": lower, "upper_fence": upper}
             results.append(result)
             if status in {"outlier", "atenção"}:
                 (evidence if status == "outlier" else attention).append(result)
     return pd.DataFrame(results), pd.DataFrame(evidence), pd.DataFrame(attention)
+
+
+def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str, radius_m: float, exclude_index=None, minimum_neighbors: int = 5):
+    """Monta o vetor regional de um ponto usando apenas seu histórico local."""
+    candidates = reference[
+        (reference["crop"].astype(str) == str(target["crop"])) &
+        (reference["depth"].astype(str) == str(target["depth"]))
+    ].copy()
+    if exclude_index is not None:
+        candidates = candidates[candidates.index != exclude_index]
+    if candidates.empty:
+        return None
+    candidates["distance_m"] = candidates.apply(
+        lambda item: haversine(float(target["longitude"]), float(target["latitude"]), float(item["longitude"]), float(item["latitude"])),
+        axis=1,
+    )
+    neighbors = candidates[candidates["distance_m"] <= radius_m].copy()
+    values = pd.to_numeric(neighbors[element], errors="coerce").dropna()
+    value = pd.to_numeric(pd.Series([target[element]]), errors="coerce").iloc[0]
+    if pd.isna(value) or len(values) < minimum_neighbors:
+        return None
+    q1, q3 = np.percentile(values, [25, 75])
+    iqr = q3 - q1
+    mean = values.mean()
+    median = values.median()
+    std = values.std(ddof=0)
+    return {
+        "value": float(value),
+        "regional_mean": float(mean),
+        "regional_median": float(median),
+        "regional_iqr": float(iqr),
+        "regional_std": float(std),
+        "neighbor_count": int(len(values)),
+        "mean_distance_m": float(neighbors["distance_m"].mean()),
+        "nearest_distance_m": float(neighbors["distance_m"].min()),
+        "difference_median": float(value - median),
+        "z_score": float((value - mean) / std) if std > 0 else 0.0,
+    }
+
+
+def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, minimum_neighbors: int = 5):
+    feature_rows = []
+    for index, target in historical.iterrows():
+        features = build_lof_features(target, historical, element, radius_m, exclude_index=index, minimum_neighbors=minimum_neighbors)
+        if features is not None:
+            features["sample_index"] = index
+            feature_rows.append(features)
+    feature_frame = pd.DataFrame(feature_rows)
+    if len(feature_frame) < 10:
+        return None
+    matrix = feature_frame[LOF_FEATURES].replace([np.inf, -np.inf], np.nan).dropna()
+    if len(matrix) < 10:
+        return None
+    scaler = RobustScaler()
+    scaled_matrix = scaler.fit_transform(matrix)
+    n_neighbors = min(20, max(2, len(matrix) - 1))
+    model = LocalOutlierFactor(n_neighbors=n_neighbors, contamination="auto", novelty=True)
+    model.fit(scaled_matrix)
+    historical_scores = -model.score_samples(scaled_matrix)
+    return {"model": model, "scaler": scaler, "threshold": float(np.percentile(historical_scores, 95)), "n_neighbors": n_neighbors}
+
+
+def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: str, radius_m: float, trained: dict, minimum_neighbors: int = 5):
+    predictions = []
+    for index, target in current.iterrows():
+        features = build_lof_features(target, historical, element, radius_m, minimum_neighbors=minimum_neighbors)
+        if features is None:
+            continue
+        vector = pd.DataFrame([features])[LOF_FEATURES].replace([np.inf, -np.inf], np.nan)
+        if vector.isna().any().any():
+            continue
+        score = float(-trained["model"].score_samples(trained["scaler"].transform(vector))[0])
+        predictions.append({
+            "sample_index": index, "element": element, "ml_score": score,
+            "ml_status": "anomalia espacial" if score >= trained["threshold"] else "normal",
+            "ml_neighbor_count": features["neighbor_count"],
+            "ml_mean_distance_m": features["mean_distance_m"],
+            "ml_regional_median": features["regional_median"],
+            "ml_regional_iqr": features["regional_iqr"],
+        })
+    return pd.DataFrame(predictions)
+
+
+def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) -> pd.DataFrame:
+    """Treina e aplica LOF por lavoura, profundidade e elemento, sem usar 2026 no treino."""
+    historical = sample[sample["year"].astype(str) != CURRENT_YEAR].copy()
+    current = sample[sample["year"].astype(str) == CURRENT_YEAR].copy()
+    predictions = []
+    for element in elements:
+        if is_ignored_element(element):
+            continue
+        for crop in current["crop"].dropna().unique():
+            for depth in current["depth"].dropna().unique():
+                historical_group = historical[(historical["crop"].astype(str) == str(crop)) & (historical["depth"].astype(str) == str(depth))].copy()
+                current_group = current[(current["crop"].astype(str) == str(crop)) & (current["depth"].astype(str) == str(depth))].copy()
+                if historical_group.empty or current_group.empty:
+                    continue
+                trained = train_lof_group(historical_group, element, radius_m)
+                if trained is None:
+                    continue
+                scored = score_lof_current(current_group, historical_group, element, radius_m, trained)
+                if not scored.empty:
+                    scored["crop"] = crop
+                    scored["depth"] = depth
+                    predictions.append(scored)
+    return pd.concat(predictions, ignore_index=True) if predictions else pd.DataFrame()
+
+
+def combine_detection(row):
+    iqr_outlier = row.get("status") == "outlier"
+    ml_outlier = row.get("ml_status") == "anomalia espacial"
+    if iqr_outlier and ml_outlier:
+        return "outlier confirmado"
+    if iqr_outlier:
+        return "outlier estatístico"
+    if ml_outlier:
+        return "anomalia espacial"
+    if row.get("status") == "atenção" or row.get("ml_status") == "dados insuficientes":
+        return "atenção"
+    return "normal"
 
 
 def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
@@ -297,7 +424,11 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
         cell = sheet.cell(int(item.source_row), column)
         cell.fill = fill
         cell.font = Font(name=cell.font.name, sz=cell.font.sz, bold=True, color="7A2E00")
-        cell.comment = Comment(f"OUTLIER 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.", "Outlieria")
+        final_status = str(item.get("final_status", "outlier estatístico")).upper()
+        ml_note = ""
+        if str(item.get("ml_status", "")) == "anomalia espacial":
+            ml_note = f" LOF espacial: score {float(item.get('ml_score', 0)):.3f}; {int(item.get('ml_neighbor_count', 0))} vizinhos."
+        cell.comment = Comment(f"{final_status} em 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.{ml_note}", "Outlieria")
     for (row, column), value in original_values.items():
         sheet.cell(row, column).value = value
     # As colunas preservadas podem conter fórmulas; solicite ao Excel/LibreOffice
@@ -355,13 +486,15 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
 
 @st.cache_data(show_spinner=False)
 def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
-    columns = ["point_id", "crop", "depth", "element", "value", "status"]
+    columns = ["point_id", "crop", "depth", "element", "value", "status", "ml_status", "ml_score", "ml_neighbor_count", "final_status"]
     frame = result[[c for c in columns if c in result.columns]].copy()
     if "value" in frame.columns:
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
+    if "ml_score" in frame.columns:
+        frame["ml_score"] = pd.to_numeric(frame["ml_score"], errors="coerce").round(3)
     if "element" in frame.columns:
         frame["element"] = frame["element"].map(element_label)
-    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal"})
+    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal IQR", "ml_status": "sinal LOF", "ml_score": "score LOF", "ml_neighbor_count": "vizinhos", "final_status": "classificação final"})
 
 
 def ordered_unique(values: pd.Series) -> list[str]:
@@ -403,14 +536,16 @@ def render_scatter(result: pd.DataFrame) -> None:
     def sy(y): return top + ((y_max - y) / (y_max - y_min)) * (height - top - bottom)
     def tick_text(value, step):
         return f"{value:.1f}" if step == 0.5 else f"{value:.0f}"
-    colors = {"outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
+    colors = {"outlier confirmado": "#c94b35", "outlier estatístico": "#d8793e", "anomalia espacial": "#7656a8", "outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
     circles = []
     for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
-        status = str(row.get("status", "normal")); color = colors.get(status, "#487c80")
+        status = str(row.get("final_status", row.get("status", "normal"))); color = colors.get(status, "#487c80")
         px, py = sx(x), sy(y)
         tooltip_x, tooltip_y = min(px + 9, width - 158), max(py - 42, 5)
         point_id = html.escape(str(row.get("point_id", row.get("source_row", ""))))
-        circles.append(f'<g class="outlieria-point"><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><g class="point-tooltip"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="148" height="34" rx="5" fill="#ffffff" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {y:.2f}</text></g></g>')
+        ml_score = row.get("ml_score")
+        score_text = f" · LOF: {float(ml_score):.2f}" if pd.notna(ml_score) else ""
+        circles.append(f'<g class="outlieria-point"><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><g class="point-tooltip"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="148" height="46" rx="5" fill="#ffffff" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {y:.2f}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 40:.1f}" font-family="IBM Plex Mono, monospace" font-size="8" fill="#7656a8">{html.escape(status)}{score_text}</text></g></g>')
     grid_parts = []
     y_ticks = np.arange(y_min, y_max + y_step * 0.01, y_step)
     for y_tick in y_ticks:
@@ -494,6 +629,7 @@ def main():
         with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
         with c3:
             radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto. Utilize sempre o raio do maior grid para a comparação.", key="radius_m")
+        enable_lof = st.checkbox("Ativar LOF espacial", value=False, help="Usa aprendizado não supervisionado para comparar cada ponto com o histórico da mesma lavoura, elemento e profundidade dentro do raio informado.", key="enable_lof")
         st.markdown("<p class='lead' style='font-size:12px'>O raio informado é aplicado separadamente a cada ponto, mantendo lavoura e profundidade isoladas. A consolidação usa somente a profundidade 0–10 cm.</p>", unsafe_allow_html=True)
         action_left, action_right = st.columns([1, 1])
         with action_left:
@@ -511,7 +647,24 @@ def main():
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         radius_m = validate_radius(radius_m)
                         result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
-                        evidence = result[result.status == "outlier"].copy(); attention = result[result.status == "atenção"].copy()
+                        if enable_lof:
+                            with st.spinner("Executando LOF espacial no histórico regional..."):
+                                lof_result = run_spatial_lof(sample, elements, radius_m)
+                        else:
+                            lof_result = pd.DataFrame()
+                        if lof_result.empty:
+                            result["ml_status"] = "desativado"
+                            result["ml_score"] = np.nan
+                            result["ml_neighbor_count"] = np.nan
+                            result["ml_mean_distance_m"] = np.nan
+                            result["ml_regional_median"] = np.nan
+                            result["ml_regional_iqr"] = np.nan
+                        else:
+                            result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_mean_distance_m", "ml_regional_median", "ml_regional_iqr"]], on=["sample_index", "element"], how="left")
+                            result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
+                        result["final_status"] = result.apply(combine_detection, axis=1)
+                        evidence = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"])].copy()
+                        attention = result[result.final_status == "atenção"].copy()
                         original_bytes = excel.getvalue()
                         shp_bytes = shp.getvalue()
                         reanalysis_bytes = export_individual(original_bytes, evidence, radius_m)
@@ -561,6 +714,14 @@ def main():
     current = st.session_state.analyses[-1]
     result = pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
     result = result[~result.element.map(is_ignored_element)].copy()
+    if "ml_status" not in result.columns:
+        result["ml_status"] = "desativado"
+    if "ml_score" not in result.columns:
+        result["ml_score"] = np.nan
+    if "ml_neighbor_count" not in result.columns:
+        result["ml_neighbor_count"] = np.nan
+    if "final_status" not in result.columns:
+        result["final_status"] = result.apply(combine_detection, axis=1)
     element_order = []
     for analysis in st.session_state.analyses:
         source_elements = analysis.get("elements", ordered_unique(analysis["result"].element))
@@ -580,8 +741,8 @@ def main():
         st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
         return
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
-    result = result.copy(); result["status_label"] = result.status.map({"outlier":"outlier 2026", "atenção":"atenção", "normal":"padrão"})
-    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.status == "outlier").sum()); attention = int((result.status == "atenção").sum()); crops = result.crop.nunique()
+    result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
+    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
     st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de {active_radius:g} m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'próximos das cercas IQR', 'sand')}{html_stat('outliers 2026', outliers, 'somente no último ano', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
@@ -597,7 +758,7 @@ def main():
     with c2:
         st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>{active_radius:g} m</b><br><span class='mono'>raio espacial ativo</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    table = result[result.status == "outlier"].copy()
+    table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"])].copy()
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
     header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
     with header_filters[1]:
