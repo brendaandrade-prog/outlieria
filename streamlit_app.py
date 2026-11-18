@@ -33,8 +33,9 @@ except ImportError:
 YEAR_RE = r"^\d{4}$"
 CURRENT_YEAR = "2026"
 MAX_DISTANCE_M = 300.0
-IQR_MULTIPLIER = 1.5
-ATTENTION_MARGIN = 0.10
+IQR_MULTIPLIER = 2.0
+LOF_THRESHOLD_PERCENTILE = 98.0
+ATTENTION_MARGIN = 0.05
 IGNORED_COLUMNS = {"A", "B", "G", "H", "S", "T", "U", "V", "W"}
 IGNORED_FROM_INDEX = 28  # AC, zero based
 IGNORED_ELEMENTS = {"H+AL", "CTC EFETIVA", "CTC", "SB", "SA", "SK", "RELEVO", "SCA", "SMG", "CA/MG"}
@@ -268,7 +269,7 @@ def classify(sample: pd.DataFrame, elements: list[str], radius_m: float = MAX_DI
     return pd.DataFrame(results), pd.DataFrame(evidence), pd.DataFrame(attention)
 
 
-def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str, radius_m: float, exclude_index=None, minimum_neighbors: int = 3):
+def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str, radius_m: float, exclude_index=None, minimum_neighbors: int = 5):
     """Monta o vetor regional de um ponto usando apenas seu histórico local."""
     candidates = reference[
         (reference["crop"].astype(str) == str(target["crop"])) &
@@ -306,7 +307,7 @@ def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str,
     }
 
 
-def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, minimum_neighbors: int = 3):
+def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, minimum_neighbors: int = 5):
     feature_rows = []
     for index, target in historical.iterrows():
         features = build_lof_features(target, historical, element, radius_m, exclude_index=index, minimum_neighbors=minimum_neighbors)
@@ -325,10 +326,10 @@ def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, min
     model = LocalOutlierFactor(n_neighbors=n_neighbors, contamination="auto", novelty=True)
     model.fit(scaled_matrix)
     historical_scores = -model.score_samples(scaled_matrix)
-    return {"model": model, "scaler": scaler, "threshold": float(np.percentile(historical_scores, 95)), "n_neighbors": n_neighbors}
+    return {"model": model, "scaler": scaler, "threshold": float(np.percentile(historical_scores, LOF_THRESHOLD_PERCENTILE)), "n_neighbors": n_neighbors}
 
 
-def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: str, radius_m: float, trained: dict, minimum_neighbors: int = 3):
+def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: str, radius_m: float, trained: dict, minimum_neighbors: int = 5):
     predictions = []
     for index, target in current.iterrows():
         features = build_lof_features(target, historical, element, radius_m, minimum_neighbors=minimum_neighbors)
