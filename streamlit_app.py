@@ -268,7 +268,7 @@ def classify(sample: pd.DataFrame, elements: list[str], radius_m: float = MAX_DI
     return pd.DataFrame(results), pd.DataFrame(evidence), pd.DataFrame(attention)
 
 
-def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str, radius_m: float, exclude_index=None, minimum_neighbors: int = 5):
+def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str, radius_m: float, exclude_index=None, minimum_neighbors: int = 3):
     """Monta o vetor regional de um ponto usando apenas seu histórico local."""
     candidates = reference[
         (reference["crop"].astype(str) == str(target["crop"])) &
@@ -306,7 +306,7 @@ def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str,
     }
 
 
-def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, minimum_neighbors: int = 5):
+def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, minimum_neighbors: int = 3):
     feature_rows = []
     for index, target in historical.iterrows():
         features = build_lof_features(target, historical, element, radius_m, exclude_index=index, minimum_neighbors=minimum_neighbors)
@@ -328,7 +328,7 @@ def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, min
     return {"model": model, "scaler": scaler, "threshold": float(np.percentile(historical_scores, 95)), "n_neighbors": n_neighbors}
 
 
-def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: str, radius_m: float, trained: dict, minimum_neighbors: int = 5):
+def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: str, radius_m: float, trained: dict, minimum_neighbors: int = 3):
     predictions = []
     for index, target in current.iterrows():
         features = build_lof_features(target, historical, element, radius_m, minimum_neighbors=minimum_neighbors)
@@ -379,11 +379,10 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 def combine_detection(row):
     iqr_outlier = row.get("status") == "outlier"
     ml_outlier = row.get("ml_status") == "anomalia espacial"
-    # O LOF é o critério principal: qualquer anomalia espacial
-    # identificada pelo modelo é um outlier. O IQR isolado fica em atenção.
-    if ml_outlier:
+    # O IQR é o primeiro filtro e o LOF confirma a anomalia espacial.
+    if iqr_outlier and ml_outlier:
         return "outlier confirmado"
-    if iqr_outlier or row.get("status") == "atenção" or row.get("ml_status") in {"dados insuficientes", "desativado"}:
+    if iqr_outlier or ml_outlier or row.get("status") == "atenção" or row.get("ml_status") in {"dados insuficientes", "desativado"}:
         return "atenção"
     return "normal"
 
