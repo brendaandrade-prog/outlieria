@@ -428,14 +428,13 @@ def run_temporal_regression(sample: pd.DataFrame, elements: list[str], radius_m:
 
 
 def combine_detection(row):
-    # Sequência de validação: LOF → IQR → regressão temporal.
+    # Sequência de validação: LOF → IQR.
     iqr_outlier = row.get("status") == "outlier"
     ml_outlier = row.get("ml_status") == "anomalia espacial"
-    regression_outlier = row.get("reg_status") == "anomalia temporal"
-    criteria_count = sum((iqr_outlier, ml_outlier, regression_outlier))
-    if criteria_count == 3:
-        return "outlier confirmado"
+    criteria_count = sum((ml_outlier, iqr_outlier))
     if criteria_count == 2:
+        return "outlier confirmado"
+    if criteria_count == 1:
         return "atenção"
     return "normal"
 
@@ -547,18 +546,15 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
 
 @st.cache_data(show_spinner=False)
 def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
-    columns = ["point_id", "crop", "depth", "element", "value", "status", "ml_status", "ml_score", "ml_neighbor_count", "reg_status", "reg_expected", "reg_residual", "reg_change_pct", "final_status"]
+    columns = ["point_id", "crop", "depth", "element", "value", "status", "ml_status", "ml_score", "ml_neighbor_count", "final_status"]
     frame = result[[c for c in columns if c in result.columns]].copy()
     if "value" in frame.columns:
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
     if "ml_score" in frame.columns:
         frame["ml_score"] = pd.to_numeric(frame["ml_score"], errors="coerce").round(3)
-    for column in ("reg_expected", "reg_residual", "reg_change_pct"):
-        if column in frame.columns:
-            frame[column] = pd.to_numeric(frame[column], errors="coerce").round(3)
     if "element" in frame.columns:
         frame["element"] = frame["element"].map(element_label)
-    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal IQR", "ml_status": "sinal LOF", "ml_score": "score LOF", "ml_neighbor_count": "vizinhos", "reg_status": "sinal regressão", "reg_expected": "valor esperado", "reg_residual": "resíduo temporal", "reg_change_pct": "variação regressão (%)", "final_status": "classificação final"})
+    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "status": "sinal IQR", "ml_status": "sinal LOF", "ml_score": "score LOF", "ml_neighbor_count": "vizinhos", "final_status": "classificação final"})
 
 
 def ordered_unique(values: pd.Series) -> list[str]:
@@ -713,17 +709,6 @@ def main():
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         radius_m = validate_radius(radius_m)
                         result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
-                        with st.spinner("Calculando tendência temporal por elemento..."):
-                            regression_result = run_temporal_regression(sample, elements, radius_m)
-                        if regression_result.empty:
-                            result["reg_status"] = "dados insuficientes"
-                            result["reg_expected"] = np.nan
-                            result["reg_residual"] = np.nan
-                            result["reg_change_pct"] = np.nan
-                            result["reg_history_count"] = np.nan
-                        else:
-                            result = result.merge(regression_result, on=["sample_index", "element"], how="left")
-                            result["reg_status"] = result["reg_status"].fillna("dados insuficientes")
                         if enable_lof:
                             with st.spinner("Executando LOF espacial no histórico regional..."):
                                 lof_result = run_spatial_lof(sample, elements, radius_m)
@@ -823,8 +808,8 @@ def main():
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Primeiro, o modelo compara a densidade local dos vizinhos da mesma lavoura.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>IQR regional</strong><p>Depois, o valor é comparado às cercas Q1 − 1,5×IQR e Q3 + 1,5×IQR.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Regressão temporal</strong><p>Por fim, redução de 45% ou aumento superior a 45% frente ao esperado sinaliza anomalia.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>Três critérios apontam outlier; exatamente dois geram atenção.</p></div></div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'dois critérios apontaram', 'sand')}{html_stat('outliers 2026', outliers, 'três critérios confirmaram', 'orange')}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Primeiro, o modelo compara a densidade local dos vizinhos da mesma lavoura.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>IQR regional</strong><p>Depois, o valor é comparado às cercas Q1 − 1,5×IQR e Q3 + 1,5×IQR.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Confirmação</strong><p>Os dois critérios precisam apontar anomalia para confirmar o outlier.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Atenção</strong><p>Quando apenas um critério aponta anomalia, o ponto fica em atenção.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'um critério apontou', 'sand')}{html_stat('outliers 2026', outliers, 'IQR + LOF confirmaram', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
         st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
