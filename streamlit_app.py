@@ -379,14 +379,59 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
     return pd.concat(predictions, ignore_index=True) if predictions else pd.DataFrame()
 
 
+def run_temporal_regression(sample: pd.DataFrame, elements: list[str], radius_m: float) -> pd.DataFrame:
+    """Estima a tendência histórica de cada elemento e avalia o resíduo de 2026."""
+    historical = sample[sample["year"].astype(str) != CURRENT_YEAR].copy()
+    current = sample[sample["year"].astype(str) == CURRENT_YEAR].copy()
+    predictions = []
+    for index, target in current.iterrows():
+        for element in elements:
+            if is_ignored_element(element) or pd.isna(target.get(element)):
+                continue
+            candidates = historical[
+                (historical["crop"].astype(str) == str(target["crop"]))
+                & (historical["depth"].astype(str) == str(target["depth"]))
+            ].copy()
+            if candidates.empty:
+                continue
+            candidates["distance_m"] = candidates.apply(
+                lambda item: haversine(float(target["longitude"]), float(target["latitude"]), float(item["longitude"]), float(item["latitude"])),
+                axis=1,
+            )
+            candidates = candidates[candidates["distance_m"] <= radius_m].copy()
+            candidates["numeric_value"] = pd.to_numeric(candidates[element], errors="coerce")
+            candidates["numeric_year"] = pd.to_numeric(candidates["year"], errors="coerce")
+            candidates = candidates.dropna(subset=["numeric_value", "numeric_year"])
+            if len(candidates) < 5 or candidates["numeric_year"].nunique() < 2:
+                continue
+            x = candidates["numeric_year"].to_numpy(dtype=float)
+            y = candidates["numeric_value"].to_numpy(dtype=float)
+            slope, intercept = np.polyfit(x, y, 1)
+            expected = float(slope * float(CURRENT_YEAR) + intercept)
+            residuals = y - (slope * x + intercept)
+            q1, q3 = np.percentile(residuals, [25, 75])
+            residual_iqr = float(q3 - q1)
+            lower, upper = float(q1 - IQR_MULTIPLIER * residual_iqr), float(q3 + IQR_MULTIPLIER * residual_iqr)
+            residual = float(float(target[element]) - expected)
+            predictions.append({
+                "sample_index": index,
+                "element": element,
+                "reg_expected": expected,
+                "reg_residual": residual,
+                "reg_history_count": int(len(candidates)),
+                "reg_status": "anomalia temporal" if residual < lower or residual > upper else "normal",
+            })
+    return pd.DataFrame(predictions)
+
+
 def combine_detection(row):
     iqr_outlier = row.get("status") == "outlier"
     ml_outlier = row.get("ml_status") == "anomalia espacial"
-    # Atenção é reservada exclusivamente para o caso em que apenas um
-    # dos dois identificadores aponta anomalia.
-    if iqr_outlier and ml_outlier:
+    regression_outlier = row.get("reg_status") == "anomalia temporal"
+    criteria_count = sum((iqr_outlier, ml_outlier, regression_outlier))
+    if criteria_count == 3:
         return "outlier confirmado"
-    if iqr_outlier or ml_outlier:
+    if criteria_count == 2:
         return "atenção"
     return "normal"
 
@@ -437,7 +482,10 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
         ml_note = ""
         if str(item.get("ml_status", "")) == "anomalia espacial":
             ml_note = f" LOF espacial: score {float(item.get('ml_score', 0)):.3f}; {int(item.get('ml_neighbor_count', 0))} vizinhos."
-        cell.comment = Comment(f"{final_status} em 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.{ml_note}", "Outlieria")
+        regression_note = ""
+        if str(item.get("reg_status", "")) == "anomalia temporal":
+            regression_note = f" Regressão temporal: esperado {float(item.get('reg_expected', 0)):.3f}; resíduo {float(item.get('reg_residual', 0)):.3f}; {int(item.get('reg_history_count', 0))} históricos."
+        cell.comment = Comment(f"{final_status} em 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.{ml_note}{regression_note}", "Outlieria")
     for (row, column), value in original_values.items():
         sheet.cell(row, column).value = value
     # As colunas preservadas podem conter fórmulas; solicite ao Excel/LibreOffice
@@ -658,6 +706,16 @@ def main():
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         radius_m = validate_radius(radius_m)
                         result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
+                        with st.spinner("Calculando tendência temporal por elemento..."):
+                            regression_result = run_temporal_regression(sample, elements, radius_m)
+                        if regression_result.empty:
+                            result["reg_status"] = "dados insuficientes"
+                            result["reg_expected"] = np.nan
+                            result["reg_residual"] = np.nan
+                            result["reg_history_count"] = np.nan
+                        else:
+                            result = result.merge(regression_result, on=["sample_index", "element"], how="left")
+                            result["reg_status"] = result["reg_status"].fillna("dados insuficientes")
                         if enable_lof:
                             with st.spinner("Executando LOF espacial no histórico regional..."):
                                 lof_result = run_spatial_lof(sample, elements, radius_m)
@@ -674,7 +732,7 @@ def main():
                             result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_mean_distance_m", "ml_regional_median", "ml_regional_iqr"]], on=["sample_index", "element"], how="left")
                             result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
                         result["final_status"] = result.apply(combine_detection, axis=1)
-                        evidence = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"])].copy()
+                        evidence = result[result.final_status == "outlier confirmado"].copy()
                         attention = result[result.final_status == "atenção"].copy()
                         original_bytes = excel.getvalue()
                         shp_bytes = shp.getvalue()
