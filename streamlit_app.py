@@ -75,6 +75,19 @@ def haversine(lon1, lat1, lon2, lat2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def validate_radius(value) -> float:
+    """Converte e valida o raio informado antes de qualquer cálculo espacial."""
+    try:
+        radius = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Informe um raio numérico válido em metros.")
+    if not math.isfinite(radius) or radius <= 0:
+        raise ValueError("O raio deve ser um número positivo e finito, maior que zero.")
+    if radius > 100_000:
+        raise ValueError("Informe um raio de até 100.000 metros.")
+    return radius
+
+
 def polygon_area_ha(geometry):
     # SHP coordinates are assumed to be longitude/latitude (WGS84).
     minx, miny, maxx, maxy = geometry.bounds
@@ -496,7 +509,7 @@ def main():
                     try:
                         polygons = read_polygons(shp.getvalue())
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
-                        radius_m = float(radius_m)
+                        radius_m = validate_radius(radius_m)
                         result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
                         evidence = result[result.status == "outlier"].copy(); attention = result[result.status == "atenção"].copy()
                         original_bytes = excel.getvalue()
