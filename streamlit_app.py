@@ -314,10 +314,10 @@ def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, min
             features["sample_index"] = index
             feature_rows.append(features)
     feature_frame = pd.DataFrame(feature_rows)
-    if len(feature_frame) < 10:
+    if len(feature_frame) < 5:
         return None
     matrix = feature_frame[LOF_FEATURES].replace([np.inf, -np.inf], np.nan).dropna()
-    if len(matrix) < 10:
+    if len(matrix) < 5:
         return None
     scaler = RobustScaler()
     scaled_matrix = scaler.fit_transform(matrix)
