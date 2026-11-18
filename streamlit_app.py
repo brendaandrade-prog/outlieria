@@ -380,10 +380,11 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 def combine_detection(row):
     iqr_outlier = row.get("status") == "outlier"
     ml_outlier = row.get("ml_status") == "anomalia espacial"
-    # O LOF é o primeiro filtro e o IQR confirma a anomalia estatística.
-    if ml_outlier and iqr_outlier:
+    # O IQR é calculado primeiro e o LOF depois. Cada método pode
+    # identificar um outlier; a atenção fica para a proximidade da cerca IQR.
+    if iqr_outlier or ml_outlier:
         return "outlier confirmado"
-    if iqr_outlier or ml_outlier or row.get("status") == "atenção" or row.get("ml_status") in {"dados insuficientes", "desativado"}:
+    if row.get("status") == "atenção" or row.get("ml_status") in {"dados insuficientes", "desativado"}:
         return "atenção"
     return "normal"
 
