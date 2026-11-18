@@ -34,8 +34,8 @@ YEAR_RE = r"^\d{4}$"
 CURRENT_YEAR = "2026"
 MAX_DISTANCE_M = 300.0
 IQR_MULTIPLIER = 2.0
-LOF_THRESHOLD_PERCENTILE = 98.0
-ATTENTION_MARGIN = 0.05
+LOF_THRESHOLD_PERCENTILE = 95.0
+ATTENTION_MARGIN = 0.10
 IGNORED_COLUMNS = {"A", "B", "G", "H", "S", "T", "U", "V", "W"}
 IGNORED_FROM_INDEX = 28  # AC, zero based
 IGNORED_ELEMENTS = {"H+AL", "CTC EFETIVA", "CTC", "SB", "SA", "SK", "RELEVO", "SCA", "SMG", "CA/MG"}
@@ -315,10 +315,10 @@ def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, min
             features["sample_index"] = index
             feature_rows.append(features)
     feature_frame = pd.DataFrame(feature_rows)
-    if len(feature_frame) < 5:
+    if len(feature_frame) < 10:
         return None
     matrix = feature_frame[LOF_FEATURES].replace([np.inf, -np.inf], np.nan).dropna()
-    if len(matrix) < 5:
+    if len(matrix) < 10:
         return None
     scaler = RobustScaler()
     scaled_matrix = scaler.fit_transform(matrix)
@@ -380,10 +380,14 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 def combine_detection(row):
     iqr_outlier = row.get("status") == "outlier"
     ml_outlier = row.get("ml_status") == "anomalia espacial"
-    # O IQR é calculado primeiro e o LOF depois. Cada método pode
-    # identificar um outlier; a atenção fica para a proximidade da cerca IQR.
-    if iqr_outlier or ml_outlier:
+    # O IQR é calculado primeiro e o LOF depois. Cada resultado mantém
+    # sua classificação própria, além da confirmação quando ambos coincidem.
+    if iqr_outlier and ml_outlier:
         return "outlier confirmado"
+    if iqr_outlier:
+        return "outlier estatístico"
+    if ml_outlier:
+        return "anomalia espacial"
     if row.get("status") == "atenção" or row.get("ml_status") in {"dados insuficientes", "desativado"}:
         return "atenção"
     return "normal"
@@ -672,7 +676,7 @@ def main():
                             result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_mean_distance_m", "ml_regional_median", "ml_regional_iqr"]], on=["sample_index", "element"], how="left")
                             result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
                         result["final_status"] = result.apply(combine_detection, axis=1)
-                        evidence = result[result.final_status == "outlier confirmado"].copy()
+                        evidence = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"])].copy()
                         attention = result[result.final_status == "atenção"].copy()
                         original_bytes = excel.getvalue()
                         shp_bytes = shp.getvalue()
@@ -754,8 +758,8 @@ def main():
         return
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
-    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de {active_radius:g} m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 1,5×IQR e Q3 + 1,5×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
+    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>Média regional</strong><p>O histórico define a distribuição dos pontos da mesma região de {active_radius:g} m.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Limites por IQR</strong><p>Q1 − 2,0×IQR e Q3 + 2,0×IQR definem as cercas.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Atenção — perto da cerca</strong><p>Valores aceitos, mas próximos do limite, aparecem em atenção.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Profundidade isolada</strong><p>0–10 cm nunca é comparado com 10–20 cm.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'próximos das cercas IQR', 'sand')}{html_stat('outliers 2026', outliers, 'somente no último ano', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
@@ -770,7 +774,7 @@ def main():
     with c2:
         st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>A classificação usa a distribuição histórica regional e mantém cada profundidade isolada.</p><hr><b>{active_radius:g} m</b><br><span class='mono'>raio espacial ativo</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    table = result[result.final_status == "outlier confirmado"].copy()
+    table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"])].copy()
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
     header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
     with header_filters[1]:
