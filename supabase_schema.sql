@@ -34,8 +34,54 @@ alter table public.analyses add column if not exists radius_m numeric(12,2) not 
 create index if not exists analyses_client_farm_idx on public.analyses (client_name, farm_name);
 create index if not exists analysis_files_analysis_idx on public.analysis_files (analysis_id);
 
+create table if not exists public.analysis_points (
+  id uuid primary key default gen_random_uuid(),
+  analysis_id uuid not null references public.analyses(id) on delete cascade,
+  point_id text,
+  source_row integer,
+  year integer,
+  crop text,
+  depth text,
+  longitude numeric(12,8),
+  latitude numeric(12,8),
+  municipality text,
+  state text,
+  polygon_index integer,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.analysis_results (
+  id uuid primary key default gen_random_uuid(),
+  analysis_id uuid not null references public.analyses(id) on delete cascade,
+  point_id_ref uuid references public.analysis_points(id) on delete cascade,
+  element text not null,
+  value numeric(18,6),
+  historical_mean numeric(18,6),
+  q1 numeric(18,6),
+  q3 numeric(18,6),
+  iqr numeric(18,6),
+  lower_fence numeric(18,6),
+  upper_fence numeric(18,6),
+  statistical_status text,
+  direction text,
+  ml_status text,
+  ml_score numeric(18,8),
+  ml_neighbor_count integer,
+  ml_mean_distance_m numeric(18,4),
+  final_status text,
+  created_at timestamptz not null default now(),
+  unique (analysis_id, point_id_ref, element)
+);
+
+create index if not exists analysis_points_analysis_idx on public.analysis_points (analysis_id);
+create index if not exists analysis_points_location_idx on public.analysis_points (municipality, state);
+create index if not exists analysis_results_analysis_idx on public.analysis_results (analysis_id);
+create index if not exists analysis_results_element_idx on public.analysis_results (element, final_status);
+
 alter table public.analyses enable row level security;
 alter table public.analysis_files enable row level security;
+alter table public.analysis_points enable row level security;
+alter table public.analysis_results enable row level security;
 
 -- A aplicação usa a chave de serviço no backend/Streamlit.
 -- Não publique essa chave no GitHub nem no navegador.
