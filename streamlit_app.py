@@ -422,7 +422,7 @@ def run_temporal_regression(sample: pd.DataFrame, elements: list[str], radius_m:
                 "reg_residual": residual,
                 "reg_change_pct": float(relative_change * 100.0),
                 "reg_history_count": int(len(candidates)),
-                "reg_status": "anomalia temporal" if relative_change <= -REGRESSION_CHANGE_THRESHOLD or relative_change > REGRESSION_CHANGE_THRESHOLD else "normal",
+                "reg_status": "anomalia temporal" if relative_change < -(REGRESSION_CHANGE_THRESHOLD + 1e-9) or relative_change > (REGRESSION_CHANGE_THRESHOLD + 1e-9) else "normal",
             })
     return pd.DataFrame(predictions)
 
