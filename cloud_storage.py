@@ -23,6 +23,18 @@ def configured() -> bool:
     return bool(setting("SUPABASE_URL") and setting("SUPABASE_SERVICE_ROLE_KEY") and setting("GOOGLE_CLIENT_ID") and setting("GOOGLE_CLIENT_SECRET") and setting("GOOGLE_REFRESH_TOKEN"))
 
 
+def missing_settings() -> list[str]:
+    """Lista apenas nomes ausentes; nunca expõe valores de Secrets."""
+    required = [
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REFRESH_TOKEN",
+    ]
+    return [name for name in required if not setting(name)]
+
+
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

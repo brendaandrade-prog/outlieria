@@ -20,7 +20,7 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from shapely.geometry import Point, shape as shapely_shape
-from cloud_storage import configured as cloud_storage_configured, persist_analysis
+from cloud_storage import configured as cloud_storage_configured, missing_settings, persist_analysis
 try:
     from sklearn.neighbors import LocalOutlierFactor
     from sklearn.preprocessing import RobustScaler
@@ -688,6 +688,9 @@ def main():
                                 st.success("Análise processada e persistida no Supabase e no Google Drive.")
                             except Exception as storage_exc:
                                 st.warning(f"A análise foi processada nesta sessão, mas não pôde ser sincronizada com a nuvem: {storage_exc}")
+                        else:
+                            missing = ", ".join(missing_settings())
+                            st.warning(f"A análise foi processada somente nesta sessão. Configure estas Secrets no Streamlit Cloud para ativar o Supabase e o Google Drive: {missing}.")
                         st.success(f"Aba 2026 atualizada: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
                     except Exception as exc: st.exception(exc)
         st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
