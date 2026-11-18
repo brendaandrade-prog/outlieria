@@ -36,7 +36,7 @@ MAX_DISTANCE_M = 300.0
 IQR_MULTIPLIER = 1.5
 LOF_THRESHOLD_PERCENTILE = 90.0
 ATTENTION_MARGIN = 0.0
-REGRESSION_CHANGE_THRESHOLD = 0.10
+REGRESSION_CHANGE_THRESHOLD = 0.20
 # Posições físicas do Excel, em índice zero: A, B, G, H e S–W.
 # Isso não significa ignorar um elemento cujo cabeçalho seja "S" (Enxofre).
 IGNORED_EXCEL_COLUMN_INDICES = {0, 1, 6, 7, *range(18, 23)}
@@ -826,7 +826,7 @@ def main():
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>O modelo compara a densidade local dos vizinhos da mesma lavoura.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>IQR regional</strong><p>O valor é comparado às cercas Q1 − 1,5×IQR e Q3 + 1,5×IQR.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Regressão temporal</strong><p>Variação superior a 10% para mais ou para menos frente ao esperado é outlier.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>A regressão pode confirmar o outlier; IQR e LOF juntos também confirmam.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>O modelo compara a densidade local dos vizinhos da mesma lavoura.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>IQR regional</strong><p>O valor é comparado às cercas Q1 − 1,5×IQR e Q3 + 1,5×IQR.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Regressão temporal</strong><p>Variação superior a 20% para mais ou para menos frente ao esperado é outlier.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>A regressão pode confirmar o outlier; IQR e LOF juntos também confirmam.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'um sinal IQR ou LOF', 'sand')}{html_stat('outliers 2026', outliers, 'regressão ou IQR + LOF', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
