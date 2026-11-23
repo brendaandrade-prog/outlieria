@@ -90,7 +90,13 @@ def supabase_request(path: str, method: str = "GET", payload: Any = None, params
         "Prefer": "return=representation,resolution=merge-duplicates",
     }
     response = requests.request(method, f"{base}/rest/v1/{path}", headers=headers, params=params, json=payload, timeout=30)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        detail = response.text.strip()
+        if detail:
+            raise requests.HTTPError(f"{exc} — resposta Supabase: {detail[:500]}", response=response) from exc
+        raise
     return response.json() if response.content else None
 
 
@@ -111,12 +117,25 @@ def persist_analysis(*, client_name: str, farm_name: str, year: int, radius_m: f
     excel_id, excel_url = (update_bytes(service, existing_files["excel_original"], original, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") if "excel_original" in existing_files else upload_bytes(service, original_name, original, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", originals))
     shp_id, shp_url = (update_bytes(service, existing_files["shp"], shp_bytes, "application/octet-stream") if "shp" in existing_files else upload_bytes(service, f"{farm_name}_limite.shp", shp_bytes, "application/octet-stream", originals))
     reanalysis_id, reanalysis_url = (update_bytes(service, existing_files["reanálise_2026"], reanalysis, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") if "reanálise_2026" in existing_files else upload_bytes(service, f"{farm_name}_reanálise_{year}.xlsx", reanalysis, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", reanalyses))
-    analysis = supabase_request("analyses?on_conflict=source_hash", "POST", {
+    analysis_payload = {
         "client_name": client_name, "farm_name": farm_name, "analysis_year": year, "radius_m": round(radius_m, 2), "lof_min_neighbors": int(lof_min_neighbors),
         "area_2026_ha": round(area_ha, 2), "point_count": point_count,
         "outlier_count": outlier_count, "attention_count": attention_count,
         "source_hash": source_hash, "drive_folder_id": root, "status": "processed",
-    })[0]
+    }
+    try:
+        analysis_response = supabase_request("analyses?on_conflict=source_hash", "POST", analysis_payload)
+    except requests.HTTPError as exc:
+        # Permite publicar a análise enquanto o administrador ainda não executou
+        # o ALTER TABLE da última versão do schema no projeto Supabase.
+        detail = str(exc).lower()
+        if "lof_min_neighbors" not in detail or "400" not in detail:
+            raise
+        legacy_payload = {key: value for key, value in analysis_payload.items() if key != "lof_min_neighbors"}
+        analysis_response = supabase_request("analyses?on_conflict=source_hash", "POST", legacy_payload)
+    if not analysis_response:
+        raise RuntimeError("O Supabase não retornou o registro da análise após o upsert.")
+    analysis = analysis_response[0]
     rows = [
         {"analysis_id": analysis["id"], "file_kind": "excel_original", "file_name": original_name, "drive_file_id": excel_id, "drive_web_url": excel_url},
         {"analysis_id": analysis["id"], "file_kind": "shp", "file_name": f"{farm_name}_limite.shp", "drive_file_id": shp_id, "drive_web_url": shp_url},
