@@ -412,6 +412,37 @@ def combine_detection(row):
     return "normal"
 
 
+def apply_ph_smp_validation(result: pd.DataFrame) -> pd.DataFrame:
+    """Marca o pH quando ele está acima do SMP do mesmo ponto."""
+    frame = result.copy()
+    frame["ph_smp_status"] = ""
+    if frame.empty or "element" not in frame.columns:
+        return frame
+    normalized = frame["element"].astype(str).str.strip().str.upper()
+    ph_rows = frame[normalized == "PH"]
+    smp_rows = frame[normalized == "SMP"]
+    if ph_rows.empty or smp_rows.empty:
+        return frame
+    smp_by_point = pd.to_numeric(smp_rows.set_index("sample_index")["value"], errors="coerce")
+    for index, row in ph_rows.iterrows():
+        smp_value = smp_by_point.get(row["sample_index"], np.nan)
+        ph_value = pd.to_numeric(pd.Series([row["value"]]), errors="coerce").iloc[0]
+        if pd.notna(ph_value) and pd.notna(smp_value) and ph_value > smp_value:
+            frame.at[index, "ph_smp_status"] = "anomalia: pH > SMP"
+    return frame
+
+
+def display_classification(row: pd.Series) -> str:
+    """Reduz os sinais internos a outlier, anomalia ou normal para a tabela."""
+    if row.get("ph_smp_status") == "anomalia: pH > SMP":
+        return "anomalia (pH > SMP)"
+    if row.get("final_status") == "outlier confirmado":
+        return "outlier"
+    if row.get("final_status") == "atenção":
+        return "anomalia"
+    return "normal"
+
+
 def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
     result = rows.copy()
     result["municipality"] = "Não localizado"
@@ -522,7 +553,7 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
 
 @st.cache_data(show_spinner=False)
 def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
-    columns = ["point_id", "crop", "depth", "element", "value", "q1", "q3", "iqr", "lower_fence", "upper_fence", "status", "ml_status", "ml_score", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "final_status"]
+    columns = ["point_id", "crop", "depth", "element", "value", "display_status"]
     frame = result[[c for c in columns if c in result.columns]].copy()
     if "value" in frame.columns:
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
@@ -533,7 +564,7 @@ def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce").round(3)
     if "element" in frame.columns:
         frame["element"] = frame["element"].map(element_label)
-    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "q1": "Q1", "q3": "Q3", "iqr": "IQR", "lower_fence": "limite inferior", "upper_fence": "limite superior", "status": "sinal IQR", "ml_status": "sinal LOF", "ml_score": "score LOF", "ml_neighbor_count": "vizinhos", "ml_k_effective": "k efetivo", "ml_radius_m": "raio (m)", "ml_rule": "regra LOF", "final_status": "classificação final"})
+    return frame.rename(columns={"point_id": "ponto", "crop": "lavoura", "depth": "profundidade", "element": "elemento", "value": "valor", "display_status": "classificação"})
 
 
 def ordered_unique(values: pd.Series) -> list[str]:
@@ -704,9 +735,11 @@ def main():
                         else:
                             result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median", "ml_regional_iqr"]], on=["sample_index", "element"], how="left")
                             result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
-                            result["ml_radius_m"] = result["ml_radius_m"].fillna(radius_m)
-                            result["ml_rule"] = result["ml_rule"].fillna(f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m")
+                        result["ml_radius_m"] = result["ml_radius_m"].fillna(radius_m)
+                        result["ml_rule"] = result["ml_rule"].fillna(f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m")
                         result["final_status"] = result.apply(combine_detection, axis=1)
+                        result = apply_ph_smp_validation(result)
+                        result["display_status"] = result.apply(display_classification, axis=1)
                         evidence = result[result.final_status == "outlier confirmado"].copy()
                         attention = result[result.final_status == "atenção"].copy()
                         original_bytes = excel.getvalue()
@@ -775,6 +808,8 @@ def main():
         result["ml_rule"] = "LOF não disponível nesta sessão antiga"
     if "final_status" not in result.columns:
         result["final_status"] = result.apply(combine_detection, axis=1)
+    result = apply_ph_smp_validation(result)
+    result["display_status"] = result.apply(display_classification, axis=1)
     element_order = []
     for analysis in st.session_state.analyses:
         source_elements = analysis.get("elements", ordered_unique(analysis["result"].element))
@@ -812,7 +847,7 @@ def main():
         analysis_radius = float(current.get("radius_m", active_radius))
         st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>IQR e LOF usam somente a referência histórica da mesma lavoura, elemento e profundidade. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos elegíveis.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · k mínimo {MIN_LOF_NEIGHBORS}</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"])].copy()
+    table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]) | (result["ph_smp_status"] == "anomalia: pH > SMP")].copy()
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
     header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
     with header_filters[1]:

@@ -51,6 +51,27 @@ class OutlieriaSpatialTests(unittest.TestCase):
         base["status"] = "atenção"
         self.assertEqual(app.combine_detection(base), "atenção")
 
+    def test_ph_above_smp_is_flagged_on_same_point(self):
+        result = pd.DataFrame([
+            {"sample_index": 10, "element": "pH", "value": 6.2, "final_status": "normal"},
+            {"sample_index": 10, "element": "SMP", "value": 5.8, "final_status": "normal"},
+            {"sample_index": 11, "element": "pH", "value": 5.1, "final_status": "normal"},
+            {"sample_index": 11, "element": "SMP", "value": 5.8, "final_status": "normal"},
+        ])
+        checked = app.apply_ph_smp_validation(result)
+        self.assertEqual(checked.loc[0, "ph_smp_status"], "anomalia: pH > SMP")
+        self.assertEqual(checked.loc[2, "ph_smp_status"], "")
+        self.assertEqual(app.display_classification(checked.loc[0]), "anomalia (pH > SMP)")
+
+    def test_display_table_has_only_core_columns_and_classification(self):
+        result = pd.DataFrame([{
+            "point_id": "C001", "crop": "L01", "depth": "0-10 cm", "element": "PH",
+            "value": 6.2, "display_status": "anomalia (pH > SMP)", "q1": 1.0,
+            "ml_score": 2.0, "reg_status": "anomalia temporal",
+        }])
+        displayed = app.frame_for_display(result)
+        self.assertEqual(list(displayed.columns), ["ponto", "lavoura", "profundidade", "elemento", "valor", "classificação"])
+
 
 if __name__ == "__main__":
     unittest.main()
