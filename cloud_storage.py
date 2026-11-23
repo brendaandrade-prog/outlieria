@@ -100,7 +100,7 @@ def supabase_request(path: str, method: str = "GET", payload: Any = None, params
     return response.json() if response.content else None
 
 
-def persist_analysis(*, client_name: str, farm_name: str, year: int, radius_m: float, original: bytes, shp_bytes: bytes, reanalysis: bytes, original_name: str, area_ha: float, point_count: int, outlier_count: int, attention_count: int, lof_min_neighbors: int = 5) -> dict[str, Any] | None:
+def persist_analysis(*, client_name: str, farm_name: str, year: int, radius_m: float, original: bytes, shp_bytes: bytes, reanalysis: bytes, original_name: str, area_ha: float, point_count: int, outlier_count: int, attention_count: int, lof_min_neighbors: int = 3) -> dict[str, Any] | None:
     if not configured():
         return None
     source_hash = sha256(original + shp_bytes)
