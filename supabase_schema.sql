@@ -6,6 +6,7 @@ create table if not exists public.analyses (
   farm_name text not null,
   analysis_year integer not null default 2026,
   radius_m numeric(12,2) not null default 300,
+  lof_min_neighbors integer not null default 5,
   inserted_at timestamptz not null default now(),
   area_2026_ha numeric(14,2),
   point_count integer,
@@ -30,6 +31,7 @@ create table if not exists public.analysis_files (
 );
 
 alter table public.analyses add column if not exists radius_m numeric(12,2) not null default 300;
+alter table public.analyses add column if not exists lof_min_neighbors integer not null default 5;
 
 create index if not exists analyses_client_farm_idx on public.analyses (client_name, farm_name);
 create index if not exists analysis_files_analysis_idx on public.analysis_files (analysis_id);
@@ -67,6 +69,9 @@ create table if not exists public.analysis_results (
   ml_status text,
   ml_score numeric(18,8),
   ml_neighbor_count integer,
+  ml_k_effective integer,
+  ml_radius_m numeric(12,2),
+  ml_rule text,
   ml_mean_distance_m numeric(18,4),
   final_status text,
   created_at timestamptz not null default now(),

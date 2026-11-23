@@ -94,7 +94,7 @@ def supabase_request(path: str, method: str = "GET", payload: Any = None, params
     return response.json() if response.content else None
 
 
-def persist_analysis(*, client_name: str, farm_name: str, year: int, radius_m: float, original: bytes, shp_bytes: bytes, reanalysis: bytes, original_name: str, area_ha: float, point_count: int, outlier_count: int, attention_count: int) -> dict[str, Any] | None:
+def persist_analysis(*, client_name: str, farm_name: str, year: int, radius_m: float, original: bytes, shp_bytes: bytes, reanalysis: bytes, original_name: str, area_ha: float, point_count: int, outlier_count: int, attention_count: int, lof_min_neighbors: int = 5) -> dict[str, Any] | None:
     if not configured():
         return None
     source_hash = sha256(original + shp_bytes)
@@ -112,7 +112,7 @@ def persist_analysis(*, client_name: str, farm_name: str, year: int, radius_m: f
     shp_id, shp_url = (update_bytes(service, existing_files["shp"], shp_bytes, "application/octet-stream") if "shp" in existing_files else upload_bytes(service, f"{farm_name}_limite.shp", shp_bytes, "application/octet-stream", originals))
     reanalysis_id, reanalysis_url = (update_bytes(service, existing_files["reanálise_2026"], reanalysis, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") if "reanálise_2026" in existing_files else upload_bytes(service, f"{farm_name}_reanálise_{year}.xlsx", reanalysis, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", reanalyses))
     analysis = supabase_request("analyses?on_conflict=source_hash", "POST", {
-        "client_name": client_name, "farm_name": farm_name, "analysis_year": year, "radius_m": round(radius_m, 2),
+        "client_name": client_name, "farm_name": farm_name, "analysis_year": year, "radius_m": round(radius_m, 2), "lof_min_neighbors": int(lof_min_neighbors),
         "area_2026_ha": round(area_ha, 2), "point_count": point_count,
         "outlier_count": outlier_count, "attention_count": attention_count,
         "source_hash": source_hash, "drive_folder_id": root, "status": "processed",
