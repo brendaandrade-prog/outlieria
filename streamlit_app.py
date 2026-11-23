@@ -152,8 +152,8 @@ def load_ibge_municipalities() -> list[IBGEMunicipality]:
 
 def find_header_row(rows: list[list[object]]) -> int:
     for i, row in enumerate(rows[:12]):
-        names = {str(x or "").strip().lower() for x in row}
-        if {"longitude", "latitude"}.issubset(names):
+        names = {normalise_header_key(x) for x in row}
+        if names.intersection({"LONGITUDE", "LONG", "X"}) and names.intersection({"LATITUDE", "LAT", "Y"}):
             return i
     return 0
 
@@ -166,12 +166,47 @@ def normalise_columns(columns: Iterable[object]) -> list[str]:
     return result
 
 
+def normalise_header_key(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
+    return "".join(character for character in text.upper().strip() if character.isalnum())
+
+
+def canonicalise_coordinate_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Aceita variações comuns de nomes sem alterar as demais colunas da planilha."""
+    aliases = {
+        "Longitude": {"LONGITUDE", "LONG", "X", "COORDENADAX", "LON"},
+        "Latitude": {"LATITUDE", "LAT", "Y", "COORDENADAY"},
+        "Profundidade": {"PROFUNDIDADE", "DEPTH", "CAMADA"},
+    }
+    rename = {}
+    used = set()
+    for column in frame.columns:
+        key = normalise_header_key(column)
+        for canonical, candidates in aliases.items():
+            if key in candidates and canonical not in used:
+                rename[column] = canonical
+                used.add(canonical)
+                break
+    return frame.rename(columns=rename)
+
+
+def parse_numeric_values(values: pd.Series) -> pd.Series:
+    """Converte números Excel e textos com vírgula decimal."""
+    numeric = pd.to_numeric(values, errors="coerce")
+    missing = numeric.isna()
+    if missing.any():
+        text = values.astype(str).str.strip().str.replace("\u00a0", "", regex=False)
+        text = text.str.replace(",", ".", regex=False).str.replace(r"[^0-9+\-.eE]", "", regex=True)
+        numeric.loc[missing] = pd.to_numeric(text.loc[missing], errors="coerce")
+    return numeric
+
+
 def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
     excluded = {"Registro", "Descrição antiga", "Fazenda", "Longitude", "Latitude", "Área/Lavoura", "Pontos", "ID", "Profundidade"}
     elements = []
     for index, name in enumerate(frame.columns):
         normalized_name = str(name).strip().upper()
-        if index in IGNORED_EXCEL_COLUMN_INDICES or index >= IGNORED_FROM_INDEX or name in excluded or is_ignored_element(name):
+        if str(name).startswith("__") or index in IGNORED_EXCEL_COLUMN_INDICES or index >= IGNORED_FROM_INDEX or name in excluded or is_ignored_element(name):
             continue
         numeric = pd.to_numeric(frame[name], errors="coerce")
         if numeric.notna().any():
@@ -196,6 +231,7 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
             continue
         columns = normalise_columns(rows[header])
         frame = pd.DataFrame(rows[header + 1 :], columns=columns)
+        frame = canonicalise_coordinate_columns(frame)
         frame = frame.dropna(how="all")
         frame["__year"] = str(year)
         frame["__excel_row"] = np.arange(header + 2, header + 2 + len(frame))
@@ -206,17 +242,33 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
         raise ValueError("Nenhuma aba anual YYYY foi encontrada.")
     elements = numeric_element_columns(next(iter(frames.values())))
     all_rows = []
+    coordinate_rows = 0
+    valid_coordinate_rows = 0
+    coordinate_examples = []
     for year, frame in frames.items():
         required = {"Longitude", "Latitude", "Profundidade"}
         if not required.issubset(frame.columns):
             continue
-        frame["Longitude"] = pd.to_numeric(frame["Longitude"], errors="coerce")
-        frame["Latitude"] = pd.to_numeric(frame["Latitude"], errors="coerce")
+        frame["Longitude"] = parse_numeric_values(frame["Longitude"])
+        frame["Latitude"] = parse_numeric_values(frame["Latitude"])
         frame = frame.dropna(subset=["Longitude", "Latitude"])
+        coordinate_rows += len(frame)
         for _, row in frame.iterrows():
-            point = Point(float(row["Longitude"]), float(row["Latitude"]))
+            longitude = float(row["Longitude"])
+            latitude = float(row["Latitude"])
+            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+                continue
+            valid_coordinate_rows += 1
+            point = Point(longitude, latitude)
             polygon_index = next((i for i, p in enumerate(polygons) if p.geometry.contains(point) or p.geometry.touches(point)), -1)
+            if polygon_index < 0 and -90 <= longitude <= 90 and -180 <= latitude <= 180:
+                swapped_point = Point(latitude, longitude)
+                swapped_index = next((i for i, p in enumerate(polygons) if p.geometry.contains(swapped_point) or p.geometry.touches(swapped_point)), -1)
+                if swapped_index >= 0:
+                    longitude, latitude, point, polygon_index = latitude, longitude, swapped_point, swapped_index
             if polygon_index < 0:
+                if len(coordinate_examples) < 3:
+                    coordinate_examples.append(f"{longitude:.6f}, {latitude:.6f}")
                 continue
             crop = str(row.get("Área/Lavoura") or "Lavoura não identificada")
             # Mantém no processamento somente os elementos válidos. As colunas
@@ -227,11 +279,19 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
                 "point_id": str(row.get("ID") or ""), "client": client_override or detected_client,
                 "farm": farm_override or str(row.get("Fazenda") or detected_farm or "Fazenda não identificada"),
                 "crop": crop, "depth": str(row.get("Profundidade") or "Não informado"),
-                "longitude": float(row["Longitude"]), "latitude": float(row["Latitude"]),
+                "longitude": longitude, "latitude": latitude,
                 "polygon_index": polygon_index, "raw": analysis_raw,
             })
     if not all_rows:
-        raise ValueError("Nenhum ponto com coordenadas foi encontrado dentro do SHP.")
+        if coordinate_rows == 0:
+            raise ValueError("Nenhuma coordenada numérica foi encontrada. Verifique os cabeçalhos Longitude/Latitude e se os valores usam vírgula ou ponto decimal.")
+        bounds = ", ".join(f"{value:.6f}" for value in polygons[0].geometry.bounds) if polygons else "SHP vazio"
+        examples = "; ".join(coordinate_examples) or "sem exemplos válidos"
+        raise ValueError(
+            f"Nenhum ponto com coordenadas foi encontrado dentro do SHP. A planilha tem {valid_coordinate_rows} coordenadas válidas, mas 0 ficaram dentro do limite. "
+            f"Exemplos fora: {examples}. Faixa do primeiro polígono SHP (minX, minY, maxX, maxY): {bounds}. "
+            "Confirme que planilha e SHP usam o mesmo sistema de coordenadas, que o SHP corresponde à mesma fazenda e que o limite está em longitude/latitude WGS84."
+        )
     sample = pd.DataFrame(all_rows)
     for element in elements:
         sample[element] = pd.to_numeric(sample["raw"].map(lambda x: x.get(element)), errors="coerce")

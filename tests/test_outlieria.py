@@ -1,7 +1,10 @@
+import io
 import unittest
 
 import numpy as np
 import pandas as pd
+from openpyxl import Workbook
+from shapely.geometry import Polygon
 
 import streamlit_app as app
 
@@ -71,6 +74,21 @@ class OutlieriaSpatialTests(unittest.TestCase):
         }])
         displayed = app.frame_for_display(result)
         self.assertEqual(list(displayed.columns), ["ponto", "lavoura", "profundidade", "elemento", "valor", "classificação"])
+
+    def test_parser_accepts_coordinate_aliases_and_decimal_comma(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "2026"
+        sheet.append(["LONG", "LAT", "CAMADA", "PH"])
+        sheet.append(["-54,2300", "-28,4980", "0-10 cm", 5.8])
+        content = io.BytesIO()
+        workbook.save(content)
+        polygon = app.PolygonRecord(Polygon([(-55, -30), (-53, -30), (-53, -27), (-55, -27)]), 1.0)
+        sample, elements, _ = app.parse_workbook(content.getvalue(), [polygon], "", "")
+        self.assertEqual(len(sample), 1)
+        self.assertEqual(elements, ["PH"])
+        self.assertAlmostEqual(sample.iloc[0]["longitude"], -54.23)
+        self.assertAlmostEqual(sample.iloc[0]["latitude"], -28.498)
 
 
 if __name__ == "__main__":
