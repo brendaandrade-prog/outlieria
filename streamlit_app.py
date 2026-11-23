@@ -477,6 +477,7 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
     }
     headers = {str(cell.value or "").strip().lower(): cell.column for cell in sheet[1]}
     fill = PatternFill("solid", fgColor="F6B26B")
+    ph_smp_fill = PatternFill("solid", fgColor="FFF2CC")
     sheet.cell(1, 1).comment = Comment(
         f"Configuração Outlieria: ano analisado {CURRENT_YEAR}; raio regional usado por ponto {radius_m:g} m; "
         f"LOF por lavoura, elemento e profundidade; mínimo de {MIN_LOF_NEIGHBORS} vizinhos; "
@@ -489,13 +490,17 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
         if not column:
             continue
         cell = sheet.cell(int(item.source_row), column)
-        cell.fill = fill
+        is_ph_smp_anomaly = str(item.get("ph_smp_status", "")) == "anomalia: pH > SMP"
+        cell.fill = ph_smp_fill if is_ph_smp_anomaly else fill
         cell.font = Font(name=cell.font.name, sz=cell.font.sz, bold=True, color="7A2E00")
         final_status = str(item.get("final_status", "outlier estatístico")).upper()
         ml_note = ""
         if str(item.get("ml_status", "")) == "anomalia espacial":
             ml_note = f" LOF espacial: score {float(item.get('ml_score', 0)):.3f}; {int(item.get('ml_neighbor_count', 0))} vizinhos; k={int(item.get('ml_k_effective', MIN_LOF_NEIGHBORS))}; raio={float(item.get('ml_radius_m', radius_m)):g} m."
-        cell.comment = Comment(f"{final_status} em 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.{ml_note}", "Outlieria")
+        validation_note = " Validação pH/SMP: pH acima do SMP; célula destacada em amarelo."
+        if not is_ph_smp_anomaly:
+            validation_note = ""
+        cell.comment = Comment(f"{final_status} em 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.{ml_note}{validation_note}", "Outlieria")
     for (row, column), value in original_values.items():
         sheet.cell(row, column).value = value
     # As colunas preservadas podem conter fórmulas; solicite ao Excel/LibreOffice
@@ -742,9 +747,13 @@ def main():
                         result["display_status"] = result.apply(display_classification, axis=1)
                         evidence = result[result.final_status == "outlier confirmado"].copy()
                         attention = result[result.final_status == "atenção"].copy()
+                        export_evidence = pd.concat([
+                            evidence,
+                            result[result["ph_smp_status"] == "anomalia: pH > SMP"],
+                        ], ignore_index=True).drop_duplicates(subset=["sample_index", "element"])
                         original_bytes = excel.getvalue()
                         shp_bytes = shp.getvalue()
-                        reanalysis_bytes = export_individual(original_bytes, evidence, radius_m)
+                        reanalysis_bytes = export_individual(original_bytes, export_evidence, radius_m)
                         client_name = str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente"
                         farm_name = str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda"
                         area_ha = sum(p.area_ha for p in polygons)
@@ -784,7 +793,11 @@ def main():
                         st.caption("ÁREA 2026"); st.markdown(f"**{area_ha:,.1f} ha**".replace(',', 'X').replace('.', ',').replace('X', '.'))
                     with row_download:
                         st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-                        st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], analysis["evidence"], float(analysis.get("radius_m", MAX_DISTANCE_M))), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis_index}_{analysis['name']}")
+                        export_rows = pd.concat([
+                            analysis["evidence"],
+                            analysis["result"][analysis["result"].get("ph_smp_status", pd.Series(index=analysis["result"].index, dtype=str)) == "anomalia: pH > SMP"],
+                        ], ignore_index=True).drop_duplicates(subset=["sample_index", "element"])
+                        st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], export_rows, float(analysis.get("radius_m", MAX_DISTANCE_M))), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis_index}_{analysis['name']}")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
         return
     if not st.session_state.analyses:
