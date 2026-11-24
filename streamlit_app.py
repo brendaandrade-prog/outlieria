@@ -627,6 +627,11 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
         "Outlieria",
     )
     evidence = evidence[~evidence.element.map(is_ignored_element)].copy()
+    # A profundidade 10–20 cm continua disponível na Visão 2026, mas não é
+    # destacada nem considerada na planilha exportada, conforme solicitado.
+    if "depth" in evidence.columns:
+        depth_key = evidence["depth"].astype(str).str.strip().str.replace("–", "-", regex=False).str.lower()
+        evidence = evidence[~depth_key.str.startswith("10-20")].copy()
     for _, item in evidence.iterrows():
         column = headers.get(str(item.element).strip().lower())
         if not column:
