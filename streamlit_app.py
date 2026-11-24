@@ -42,7 +42,6 @@ LOF_THRESHOLD_PERCENTILE = 90.0
 ATTENTION_MARGIN = 0.0
 MIN_LOF_NEIGHBORS = 3
 MIN_REGRESSION_CYCLES = 3
-REGRESSION_CHANGE_THRESHOLD = 0.20
 # Posições físicas do Excel, em índice zero: A, B, G, H e S–W.
 # Isso não significa ignorar um elemento cujo cabeçalho seja "S" (Enxofre).
 IGNORED_EXCEL_COLUMN_INDICES = {0, 1, 6, 7, *range(18, 23)}
@@ -457,11 +456,14 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 
 
 def combine_detection(row):
-    # LOF e regressão são critérios independentes. Qualquer um deles pode
-    # apontar o ponto; uma mudança regional conjunta não cancela o alerta.
+    # Qualquer diferença temporal espacial detectada já é outlier. O LOF
+    # continua sendo calculado como evidência complementar, mas não pode
+    # esconder uma mudança observada na coordenada atual.
     ml_outlier = row.get("ml_status") == "anomalia espacial"
     regression_outlier = row.get("reg_status") == "anomalia temporal"
-    if ml_outlier or regression_outlier:
+    if regression_outlier:
+        return "outlier confirmado"
+    if ml_outlier:
         return "outlier confirmado"
     if row.get("status") == "atenção":
         return "atenção"
@@ -540,17 +542,16 @@ def run_spatial_regression(sample: pd.DataFrame, elements: list[str], radius_m: 
             scale = max(3.0 * mad, float(np.std(residuals)), 1e-6)
             residual = float(value - predicted)
             score = abs(residual) / scale
-            # Uma alteração relativa relevante é anomalia temporal. Ela é
-            # avaliada por coordenada e continua válida mesmo quando vários
-            # pontos da região mudam juntos.
-            relative_change = abs(residual) / max(abs(predicted), 1e-9)
-            is_anomaly = relative_change >= REGRESSION_CHANGE_THRESHOLD
+            # A solicitação é mostrar qualquer divergência temporal espacial:
+            # a mudança regional não cancela o sinal do ponto. A tolerância
+            # evita marcar apenas diferenças numéricas de arredondamento.
+            is_anomaly = abs(residual) > 1e-9
             predictions.append({
                 "sample_index": index, "element": element,
                 "reg_status": "anomalia temporal" if is_anomaly else "normal",
                 "reg_prediction": predicted, "reg_residual": residual, "reg_score": score,
                 "reg_cycles": len(series),
-                "reg_rule": f"Theil-Sen espacial; {len(series)} ciclos; alteração relativa ≥ {REGRESSION_CHANGE_THRESHOLD:.0%}; raio={radius_m:g} m",
+                "reg_rule": f"Theil-Sen espacial; {len(series)} ciclos; qualquer resíduo temporal acima da tolerância numérica; raio={radius_m:g} m",
             })
     return pd.DataFrame(predictions)
 
@@ -1013,7 +1014,7 @@ def main():
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia temporal":"anomalia temporal", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>LOF ou alteração temporal relevante ≥ {REGRESSION_CHANGE_THRESHOLD:.0%} gera outlier; a mudança conjunta da região não cancela o alerta.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>Qualquer diferença temporal espacial detectada gera outlier; o LOF também pode gerar o sinal.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('regra', 'LOF + regressão', 'confirmação simultânea', 'sand')}{html_stat('outliers confirmados', outliers, 'únicos exibidos', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:

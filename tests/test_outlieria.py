@@ -55,10 +55,6 @@ class OutlieriaSpatialTests(unittest.TestCase):
         base["ml_status"] = "normal"
         self.assertEqual(app.combine_detection(base), "normal")
 
-    def test_regression_relative_change_threshold(self):
-        self.assertEqual(app.REGRESSION_CHANGE_THRESHOLD, 0.20)
-        self.assertEqual(app.combine_detection({"ml_status": "normal", "reg_status": "anomalia temporal"}), "outlier confirmado")
-
     def test_spatial_regression_does_not_pair_by_point_id(self):
         rows = []
         # Os IDs mudam em cada ciclo; a coordenada permanece próxima do alvo.
