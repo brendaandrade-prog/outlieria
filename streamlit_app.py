@@ -456,16 +456,14 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 
 
 def combine_detection(row):
-    # Qualquer diferença temporal espacial detectada já é outlier. O LOF
-    # continua sendo calculado como evidência complementar, mas não pode
-    # esconder uma mudança observada na coordenada atual.
+    # Os dois critérios precisam apontar a mesma anomalia para confirmar um
+    # outlier. A interface exibe somente essa confirmação simultânea.
     ml_outlier = row.get("ml_status") == "anomalia espacial"
     regression_outlier = row.get("reg_status") == "anomalia temporal"
-    if regression_outlier:
+    criteria_count = sum((ml_outlier, regression_outlier))
+    if criteria_count == 2:
         return "outlier confirmado"
-    if ml_outlier:
-        return "outlier confirmado"
-    if row.get("status") == "atenção":
+    if criteria_count == 1 or row.get("status") == "atenção":
         return "atenção"
     return "normal"
 
@@ -542,16 +540,15 @@ def run_spatial_regression(sample: pd.DataFrame, elements: list[str], radius_m: 
             scale = max(3.0 * mad, float(np.std(residuals)), 1e-6)
             residual = float(value - predicted)
             score = abs(residual) / scale
-            # A solicitação é mostrar qualquer divergência temporal espacial:
-            # a mudança regional não cancela o sinal do ponto. A tolerância
-            # evita marcar apenas diferenças numéricas de arredondamento.
-            is_anomaly = abs(residual) > 1e-9
+            # Regra robusta original: só marca quando o resíduo supera três
+            # escalas robustas da série temporal espacial.
+            is_anomaly = score > 3.0
             predictions.append({
                 "sample_index": index, "element": element,
                 "reg_status": "anomalia temporal" if is_anomaly else "normal",
                 "reg_prediction": predicted, "reg_residual": residual, "reg_score": score,
                 "reg_cycles": len(series),
-                "reg_rule": f"Theil-Sen espacial; {len(series)} ciclos; qualquer resíduo temporal acima da tolerância numérica; raio={radius_m:g} m",
+                "reg_rule": f"Theil-Sen espacial; {len(series)} ciclos; resíduo robusto > 3×escala; raio={radius_m:g} m",
             })
     return pd.DataFrame(predictions)
 
