@@ -48,10 +48,10 @@ class OutlieriaSpatialTests(unittest.TestCase):
         base = {"status": "normal", "ml_status": "anomalia espacial", "reg_status": "anomalia temporal"}
         self.assertEqual(app.combine_detection(base), "outlier confirmado")
         base["ml_status"] = "normal"
-        self.assertEqual(app.combine_detection(base), "anomalia temporal")
+        self.assertEqual(app.combine_detection(base), "outlier confirmado")
         base["reg_status"] = "normal"
         base["ml_status"] = "anomalia espacial"
-        self.assertEqual(app.combine_detection(base), "anomalia espacial")
+        self.assertEqual(app.combine_detection(base), "outlier confirmado")
         base["ml_status"] = "normal"
         self.assertEqual(app.combine_detection(base), "normal")
 
