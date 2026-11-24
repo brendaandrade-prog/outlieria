@@ -122,6 +122,16 @@ class OutlieriaSpatialTests(unittest.TestCase):
         self.assertEqual(checked.loc[2, "ph_smp_status"], "")
         self.assertEqual(app.display_classification(checked.loc[0]), "anomalia (pH > SMP)")
 
+    def test_ph_smp_validation_is_evidence_without_statistical_confirmation(self):
+        result = pd.DataFrame([
+            {"sample_index": 10, "element": "pH", "value": 6.2, "final_status": "normal"},
+            {"sample_index": 10, "element": "SMP", "value": 5.8, "final_status": "normal"},
+        ])
+        checked = app.apply_ph_smp_validation(result)
+        evidence = app.select_evidence(checked)
+        self.assertEqual(list(evidence.element), ["pH"])
+        self.assertEqual(evidence.iloc[0]["ph_smp_status"], "anomalia: pH > SMP")
+
     def test_display_table_has_only_core_columns_and_classification(self):
         result = pd.DataFrame([{
             "point_id": "C001", "crop": "L01", "depth": "0-10 cm", "element": "PH",

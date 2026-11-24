@@ -653,6 +653,21 @@ def display_classification(row: pd.Series) -> str:
     return "normal"
 
 
+def select_evidence(result: pd.DataFrame) -> pd.DataFrame:
+    """Seleciona outliers confirmados e validações determinísticas pH/SMP.
+
+    A validação pH/SMP não substitui LOF ou regressão e não entra no
+    treinamento. Ela é uma regra química independente e precisa continuar
+    visível/exportável mesmo quando os dois critérios estatísticos não
+    confirmam o ponto.
+    """
+    if result.empty:
+        return result.copy()
+    confirmed = result.get("final_status", pd.Series(index=result.index, dtype=object)).eq("outlier confirmado")
+    ph_smp = result.get("ph_smp_status", pd.Series(index=result.index, dtype=object)).eq("anomalia: pH > SMP")
+    return result[confirmed | ph_smp].copy()
+
+
 def locate_ibge(rows: pd.DataFrame) -> pd.DataFrame:
     result = rows.copy()
     result["municipality"] = "Não localizado"
@@ -991,7 +1006,7 @@ def main():
                         result["display_status"] = result.apply(display_classification, axis=1)
                         # A interface e a exportação destacam somente a confirmação
                         # simultânea por LOF + regressão temporal espacial.
-                        evidence = result[result.final_status == "outlier confirmado"].copy()
+                        evidence = select_evidence(result)
                         attention = result[result.final_status == "atenção"].copy()
                         export_evidence = evidence.copy()
                         original_bytes = excel.getvalue()
@@ -1100,7 +1115,9 @@ def main():
         analysis_radius = float(current.get("radius_m", active_radius))
         st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    table = result[result.final_status == "outlier confirmado"].copy()
+    # Além dos outliers confirmados, a validação química pH/SMP precisa ser
+    # exibida mesmo quando LOF e regressão não confirmam o ponto.
+    table = select_evidence(result)
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
     header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
     with header_filters[1]:
