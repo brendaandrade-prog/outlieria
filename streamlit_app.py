@@ -95,17 +95,6 @@ def haversine(lon1, lat1, lon2, lat2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def haversine_vector(lon, lat, longitudes, latitudes):
-    """Distância Haversine vetorizada para evitar apply linha a linha."""
-    radius = 6_371_000.0
-    p1 = np.radians(float(lat))
-    p2 = np.radians(np.asarray(latitudes, dtype=float))
-    dp = p2 - p1
-    dl = np.radians(np.asarray(longitudes, dtype=float) - float(lon))
-    a = np.sin(dp / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2
-    return 2 * radius * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
-
-
 def validate_radius(value) -> float:
     """Converte e valida o raio informado antes de qualquer cálculo espacial."""
     try:
@@ -338,8 +327,9 @@ def eligible_lof_neighbors(target: pd.Series, reference: pd.DataFrame, element: 
         candidates = candidates[candidates.index != exclude_index]
     if candidates.empty:
         return candidates
-    candidates["distance_m"] = haversine_vector(
-        float(target["longitude"]), float(target["latitude"]), candidates["longitude"].to_numpy(), candidates["latitude"].to_numpy()
+    candidates["distance_m"] = candidates.apply(
+        lambda item: haversine(float(target["longitude"]), float(target["latitude"]), float(item["longitude"]), float(item["latitude"])),
+        axis=1,
     )
     candidates = candidates[candidates["distance_m"] <= radius_m].copy()
     candidates[element] = pd.to_numeric(candidates[element], errors="coerce")
@@ -479,8 +469,9 @@ def spatial_temporal_reference(target: pd.Series, historical: pd.DataFrame, elem
     candidates = candidates.dropna(subset=["value_numeric", "longitude", "latitude"])
     if candidates.empty:
         return []
-    candidates["distance_m"] = haversine_vector(
-        float(target["longitude"]), float(target["latitude"]), candidates["longitude"].to_numpy(), candidates["latitude"].to_numpy()
+    candidates["distance_m"] = candidates.apply(
+        lambda item: haversine(float(target["longitude"]), float(target["latitude"]), float(item["longitude"]), float(item["latitude"])),
+        axis=1,
     )
     candidates = candidates[candidates["distance_m"] <= radius_m]
     if candidates.empty:
@@ -861,10 +852,6 @@ def main():
                         polygons = read_polygons(shp.getvalue())
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         radius_m = validate_radius(radius_m)
-                        if not (sample["year"].astype(str) == CURRENT_YEAR).any():
-                            raise ValueError("A planilha foi lida, mas não contém registros do ciclo 2026. Verifique se a aba anual 2026 existe e se está dentro do limite SHP.")
-                        if not elements:
-                            raise ValueError("Nenhum elemento numérico elegível foi encontrado. As colunas excluídas não entram na análise.")
                         result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
                         with st.spinner("Executando LOF espacial no histórico regional..."):
                             lof_result = run_spatial_lof(sample, elements, radius_m)
