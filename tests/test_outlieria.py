@@ -44,15 +44,42 @@ class OutlieriaSpatialTests(unittest.TestCase):
         self.assertTrue((result["ml_radius_m"] == 300).all())
         self.assertIn("10-20 cm", set(result["depth"]) if "depth" in result else {"10-20 cm"})
 
-    def test_classification_uses_iqr_and_lof_only(self):
-        base = {"status": "outlier", "ml_status": "anomalia espacial"}
+    def test_classification_uses_lof_and_regression_only(self):
+        base = {"status": "normal", "ml_status": "anomalia espacial", "reg_status": "anomalia temporal"}
         self.assertEqual(app.combine_detection(base), "outlier confirmado")
         base["ml_status"] = "normal"
         self.assertEqual(app.combine_detection(base), "atenção")
-        base["status"] = "normal"
+        base["reg_status"] = "normal"
         self.assertEqual(app.combine_detection(base), "normal")
-        base["status"] = "atenção"
-        self.assertEqual(app.combine_detection(base), "atenção")
+
+    def test_spatial_regression_does_not_pair_by_point_id(self):
+        rows = []
+        # Os IDs mudam em cada ciclo; a coordenada permanece próxima do alvo.
+        for year, point_id, value in [(2018, "A001", 2.0), (2021, "B044", 3.5), (2023, "C900", 5.0)]:
+            rows.append({
+                "year": str(year), "crop": "L01", "depth": "0-10 cm",
+                "longitude": -50.0 + (year - 2018) * 0.000001, "latitude": -20.0,
+                "point_id": point_id, "MO": value,
+            })
+        rows.append({
+            "year": "2026", "crop": "L01", "depth": "0-10 cm",
+            "longitude": -50.0, "latitude": -20.0, "point_id": "R012", "MO": 5.2,
+        })
+        sample = pd.DataFrame(rows)
+        result = app.run_spatial_regression(sample, ["MO"], 300)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(int(result.iloc[0]["reg_cycles"]), 3)
+        self.assertNotEqual(result.iloc[0]["reg_status"], "dados insuficientes")
+
+    def test_spatial_temporal_reference_ignores_id(self):
+        historical = pd.DataFrame([
+            {"year": "2021", "crop": "L01", "depth": "0-10 cm", "longitude": -50.0, "latitude": -20.0, "point_id": "OLD", "MO": 4.0},
+            {"year": "2023", "crop": "L01", "depth": "0-10 cm", "longitude": -50.0, "latitude": -20.0, "point_id": "OTHER", "MO": 5.0},
+        ])
+        target = pd.Series({"crop": "L01", "depth": "0-10 cm", "longitude": -50.0, "latitude": -20.0, "point_id": "NEW"})
+        series = app.spatial_temporal_reference(target, historical, "MO", 300)
+        self.assertEqual([item[0] for item in series], [2021, 2023])
+        self.assertEqual([item[1] for item in series], [4.0, 5.0])
 
     def test_ph_above_smp_is_flagged_on_same_point(self):
         result = pd.DataFrame([

@@ -21,23 +21,27 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from shapely.geometry import Point, shape as shapely_shape
 from cloud_storage import configured as cloud_storage_configured, missing_settings, persist_analysis
+SKLEARN_IMPORT_ERROR = ""
 try:
     from sklearn.neighbors import LocalOutlierFactor
     from sklearn.preprocessing import RobustScaler
+    from sklearn.linear_model import TheilSenRegressor
     LOF_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     LocalOutlierFactor = None
     RobustScaler = None
+    TheilSenRegressor = None
     LOF_AVAILABLE = False
+    SKLEARN_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 YEAR_RE = r"^\d{4}$"
 CURRENT_YEAR = "2026"
 DEFAULT_RADIUS_M = 300.0
 MAX_DISTANCE_M = DEFAULT_RADIUS_M  # compatibilidade com análises antigas; o cálculo usa o raio informado.
-IQR_MULTIPLIER = 1.5
 LOF_THRESHOLD_PERCENTILE = 90.0
 ATTENTION_MARGIN = 0.0
 MIN_LOF_NEIGHBORS = 3
+MIN_REGRESSION_CYCLES = 3
 # Posições físicas do Excel, em índice zero: A, B, G, H e S–W.
 # Isso não significa ignorar um elemento cujo cabeçalho seja "S" (Enxofre).
 IGNORED_EXCEL_COLUMN_INDICES = {0, 1, 6, 7, *range(18, 23)}
@@ -64,7 +68,7 @@ ELEMENT_LABELS = {
     "Argila": "Argila",
 }
 LOF_FEATURES = [
-    "value", "regional_mean", "regional_median", "regional_iqr",
+    "value", "regional_mean", "regional_median",
     "regional_std", "neighbor_count", "mean_distance_m",
     "nearest_distance_m", "difference_median", "z_score",
 ]
@@ -91,6 +95,17 @@ def haversine(lon1, lat1, lon2, lat2):
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def haversine_vector(lon, lat, longitudes, latitudes):
+    """Calcula várias distâncias Haversine sem apply linha a linha."""
+    radius = 6_371_000.0
+    p1 = np.radians(float(lat))
+    p2 = np.radians(np.asarray(latitudes, dtype=float))
+    dp = p2 - p1
+    dl = np.radians(np.asarray(longitudes, dtype=float) - float(lon))
+    a = np.sin(dp / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2
+    return 2 * radius * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
 
 
 def validate_radius(value) -> float:
@@ -299,8 +314,8 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
 
 
 def classify(sample: pd.DataFrame, elements: list[str], radius_m: float = MAX_DISTANCE_M) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Cria a matriz de candidatos 2026; a classificação vem de LOF + regressão."""
     current = sample[sample.year == CURRENT_YEAR].copy()
-    historical = sample[sample.year != CURRENT_YEAR].copy()
     results, evidence, attention = [], [], []
     for idx, row in current.iterrows():
         for element in elements:
@@ -311,25 +326,8 @@ def classify(sample: pd.DataFrame, elements: list[str], radius_m: float = MAX_DI
             value = row.get(element)
             if pd.isna(value):
                 continue
-            candidates = historical[(historical.crop == row.crop) & (historical.depth == row.depth)]
-            distances = candidates.apply(lambda h: haversine(row.longitude, row.latitude, h.longitude, h.latitude), axis=1) if not candidates.empty else pd.Series(dtype=float)
-            candidates = candidates.loc[distances[distances <= radius_m].index] if not candidates.empty else candidates
-            values = pd.to_numeric(candidates[element], errors="coerce").dropna().to_numpy() if not candidates.empty else np.array([])
-            if len(values) < 2:
-                status, direction, q1, q3, iqr, lower, upper, mean = "normal", "", np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-            else:
-                q1, q3 = np.percentile(values, [25, 75]); iqr = q3 - q1
-                lower, upper = q1 - IQR_MULTIPLIER * iqr, q3 + IQR_MULTIPLIER * iqr
-                mean = float(np.mean(values)); direction = "abaixo" if value < lower else "acima" if value > upper else ""
-                status = "outlier" if direction else "normal"
-                margin = abs(iqr) * ATTENTION_MARGIN
-                if not direction and (abs(value - lower) <= margin or abs(value - upper) <= margin):
-                    status = "atenção"; direction = "abaixo" if abs(value - lower) < abs(value - upper) else "acima"
-            result = {**row.to_dict(), "sample_index": idx, "element": element, "value": float(value), "status": status, "direction": direction,
-                      "historical_mean": mean, "q1": q1, "q3": q3, "iqr": iqr, "lower_fence": lower, "upper_fence": upper}
+            result = {**row.to_dict(), "sample_index": idx, "element": element, "value": float(value), "status": "normal", "direction": ""}
             results.append(result)
-            if status in {"outlier", "atenção"}:
-                (evidence if status == "outlier" else attention).append(result)
     return pd.DataFrame(results), pd.DataFrame(evidence), pd.DataFrame(attention)
 
 
@@ -342,9 +340,8 @@ def eligible_lof_neighbors(target: pd.Series, reference: pd.DataFrame, element: 
         candidates = candidates[candidates.index != exclude_index]
     if candidates.empty:
         return candidates
-    candidates["distance_m"] = candidates.apply(
-        lambda item: haversine(float(target["longitude"]), float(target["latitude"]), float(item["longitude"]), float(item["latitude"])),
-        axis=1,
+    candidates["distance_m"] = haversine_vector(
+        float(target["longitude"]), float(target["latitude"]), candidates["longitude"].to_numpy(), candidates["latitude"].to_numpy()
     )
     candidates = candidates[candidates["distance_m"] <= radius_m].copy()
     candidates[element] = pd.to_numeric(candidates[element], errors="coerce")
@@ -358,8 +355,6 @@ def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str,
     value = pd.to_numeric(pd.Series([target[element]]), errors="coerce").iloc[0]
     if pd.isna(value) or len(values) < minimum_neighbors:
         return None
-    q1, q3 = np.percentile(values, [25, 75])
-    iqr = q3 - q1
     mean = values.mean()
     median = values.median()
     std = values.std(ddof=0)
@@ -367,7 +362,6 @@ def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str,
         "value": float(value),
         "regional_mean": float(mean),
         "regional_median": float(median),
-        "regional_iqr": float(iqr),
         "regional_std": float(std),
         "neighbor_count": int(len(values)),
         "mean_distance_m": float(neighbors["distance_m"].mean()),
@@ -420,7 +414,6 @@ def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: 
             "ml_rule": f"LOF ≥ percentil {LOF_THRESHOLD_PERCENTILE:g} dos scores históricos; k={trained['n_neighbors']}; raio={radius_m:g} m",
             "ml_mean_distance_m": features["mean_distance_m"],
             "ml_regional_median": features["regional_median"],
-            "ml_regional_iqr": features["regional_iqr"],
         })
     return pd.DataFrame(predictions)
 
@@ -428,7 +421,9 @@ def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: 
 def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) -> pd.DataFrame:
     """Treina e aplica LOF por lavoura, profundidade e elemento, sem usar 2026 no treino."""
     if not LOF_AVAILABLE:
-        raise RuntimeError("O pacote scikit-learn não está instalado. Aguarde o redeploy ou instale as dependências do requirements.txt.")
+        # O LOF é opcional para não impedir a importação da planilha quando o
+        # ambiente ainda está instalando ou não consegue carregar o sklearn.
+        return pd.DataFrame()
     historical = sample[sample["year"].astype(str) != CURRENT_YEAR].copy()
     current = sample[sample["year"].astype(str) == CURRENT_YEAR].copy()
     predictions = []
@@ -447,9 +442,9 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
                     neighbors = eligible_lof_neighbors(target, historical_group, element, radius_m)
                     neighbor_count = len(neighbors)
                     if neighbor_count < MIN_LOF_NEIGHBORS:
-                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: {neighbor_count} vizinhos elegíveis; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan, "ml_regional_iqr": np.nan})
+                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: {neighbor_count} vizinhos elegíveis; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan})
                     elif trained is None:
-                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: histórico treinável insuficiente para k≥{MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan, "ml_regional_iqr": np.nan})
+                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: histórico treinável insuficiente para k≥{MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan})
                 scored = score_lof_current(current_group, historical_group, element, radius_m, trained, MIN_LOF_NEIGHBORS) if trained is not None else pd.DataFrame()
                 if fallback_rows:
                     scored = pd.concat([scored, pd.DataFrame(fallback_rows)], ignore_index=True)
@@ -461,15 +456,98 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 
 
 def combine_detection(row):
-    # Dois critérios independentes: LOF espacial e IQR regional.
-    iqr_outlier = row.get("status") == "outlier"
+    # Dois critérios independentes: LOF espacial e regressão temporal espacial.
     ml_outlier = row.get("ml_status") == "anomalia espacial"
-    criteria_count = sum((ml_outlier, iqr_outlier))
+    regression_outlier = row.get("reg_status") == "anomalia temporal"
+    criteria_count = sum((ml_outlier, regression_outlier))
     if criteria_count == 2:
         return "outlier confirmado"
     if criteria_count == 1 or row.get("status") == "atenção":
         return "atenção"
     return "normal"
+
+
+def spatial_temporal_reference(target: pd.Series, historical: pd.DataFrame, element: str, radius_m: float) -> list[tuple[int, float, float]]:
+    """Reconstrói a série da coordenada usando os registros mais próximos de cada ciclo.
+
+    O ID não participa da seleção. Em cada ano, os até cinco pontos mais próximos
+    da coordenada do alvo são combinados por peso inverso da distância.
+    """
+    candidates = historical[
+        (historical["crop"].astype(str) == str(target["crop"])) &
+        (historical["depth"].astype(str) == str(target["depth"]))
+    ].copy()
+    if candidates.empty:
+        return []
+    candidates["value_numeric"] = pd.to_numeric(candidates[element], errors="coerce")
+    candidates = candidates.dropna(subset=["value_numeric", "longitude", "latitude"])
+    if candidates.empty:
+        return []
+    candidates["distance_m"] = haversine_vector(
+        float(target["longitude"]), float(target["latitude"]), candidates["longitude"].to_numpy(), candidates["latitude"].to_numpy()
+    )
+    candidates = candidates[candidates["distance_m"] <= radius_m]
+    if candidates.empty:
+        return []
+    series = []
+    for year, group in candidates.groupby(candidates["year"].astype(int)):
+        nearest = group.sort_values("distance_m").head(5)
+        distances = nearest["distance_m"].to_numpy(dtype=float)
+        values = nearest["value_numeric"].to_numpy(dtype=float)
+        if np.any(distances == 0):
+            estimate = float(values[np.argmin(distances)])
+        else:
+            weights = 1.0 / distances
+            estimate = float(np.average(values, weights=weights))
+        series.append((int(year), estimate, float(nearest["distance_m"].min())))
+    return sorted(series)
+
+
+def run_spatial_regression(sample: pd.DataFrame, elements: list[str], radius_m: float) -> pd.DataFrame:
+    """Avalia a tendência temporal da localização, sem parear IDs entre ciclos."""
+    historical = sample[sample["year"].astype(str) != CURRENT_YEAR].copy()
+    current = sample[sample["year"].astype(str) == CURRENT_YEAR].copy()
+    predictions = []
+    for element in elements:
+        if is_ignored_element(element):
+            continue
+        for index, target in current.iterrows():
+            value = pd.to_numeric(pd.Series([target[element]]), errors="coerce").iloc[0]
+            if pd.isna(value):
+                continue
+            series = spatial_temporal_reference(target, historical, element, radius_m)
+            if len(series) < MIN_REGRESSION_CYCLES:
+                predictions.append({
+                    "sample_index": index, "element": element, "reg_status": "dados insuficientes",
+                    "reg_prediction": np.nan, "reg_residual": np.nan, "reg_score": np.nan,
+                    "reg_cycles": len(series), "reg_rule": f"Regressão não calculada: {len(series)} ciclos espaciais; mínimo={MIN_REGRESSION_CYCLES}; raio={radius_m:g} m",
+                })
+                continue
+            years = np.array([item[0] for item in series], dtype=float)
+            values = np.array([item[1] for item in series], dtype=float)
+            model = TheilSenRegressor(random_state=42, fit_intercept=True) if TheilSenRegressor is not None else None
+            if model is not None:
+                model.fit(years.reshape(-1, 1), values)
+                predicted = float(model.predict(np.array([[int(CURRENT_YEAR)]]))[0])
+                fitted = model.predict(years.reshape(-1, 1))
+            else:
+                slope, intercept = np.polyfit(years, values, 1)
+                predicted = float(slope * int(CURRENT_YEAR) + intercept)
+                fitted = slope * years + intercept
+            residuals = values - fitted
+            mad = float(np.median(np.abs(residuals - np.median(residuals))))
+            scale = max(3.0 * mad, float(np.std(residuals)), 1e-6)
+            residual = float(value - predicted)
+            score = abs(residual) / scale
+            is_anomaly = score > 3.0
+            predictions.append({
+                "sample_index": index, "element": element,
+                "reg_status": "anomalia temporal" if is_anomaly else "normal",
+                "reg_prediction": predicted, "reg_residual": residual, "reg_score": score,
+                "reg_cycles": len(series),
+                "reg_rule": f"Theil-Sen espacial; {len(series)} ciclos; resíduo robusto > 3×escala; raio={radius_m:g} m",
+            })
+    return pd.DataFrame(predictions)
 
 
 def apply_ph_smp_validation(result: pd.DataFrame) -> pd.DataFrame:
@@ -541,7 +619,7 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
     sheet.cell(1, 1).comment = Comment(
         f"Configuração Outlieria: ano analisado {CURRENT_YEAR}; raio regional usado por ponto {radius_m:g} m; "
         f"LOF por lavoura, elemento e profundidade; mínimo de {MIN_LOF_NEIGHBORS} vizinhos; "
-        f"limiar LOF no percentil {LOF_THRESHOLD_PERCENTILE:g} dos scores históricos; IQR com cercas Q1 − {IQR_MULTIPLIER:g}×IQR e Q3 + {IQR_MULTIPLIER:g}×IQR.",
+        f"limiar LOF no percentil {LOF_THRESHOLD_PERCENTILE:g} dos scores históricos; regressão temporal espacial Theil-Sen com mínimo de {MIN_REGRESSION_CYCLES} ciclos.",
         "Outlieria",
     )
     evidence = evidence[~evidence.element.map(is_ignored_element)].copy()
@@ -560,7 +638,10 @@ def export_individual(original: bytes, evidence: pd.DataFrame, radius_m: float =
         validation_note = " Validação pH/SMP: pH acima do SMP; célula destacada em amarelo."
         if not is_ph_smp_anomaly:
             validation_note = ""
-        cell.comment = Comment(f"{final_status} em 2026 comparado ao histórico regional de {radius_m:g} m. Valor {item.value}; média histórica {item.historical_mean:.3f}; Q1 {item.q1:.3f}; Q3 {item.q3:.3f}; IQR {item.iqr:.3f}; limites {item.lower_fence:.3f} a {item.upper_fence:.3f}.{ml_note}{validation_note}", "Outlieria")
+        reg_note = ""
+        if str(item.get("reg_status", "")) == "anomalia temporal":
+            reg_note = f" Regressão temporal espacial: previsto {float(item.get('reg_prediction', 0)):.3f}; resíduo {float(item.get('reg_residual', 0)):.3f}; score {float(item.get('reg_score', 0)):.3f}."
+        cell.comment = Comment(f"{final_status} em 2026 comparado pela coordenada ao histórico espacial de {radius_m:g} m. Valor {item.value}.{ml_note}{reg_note}{validation_note}", "Outlieria")
     for (row, column), value in original_values.items():
         sheet.cell(row, column).value = value
     # As colunas preservadas podem conter fórmulas; solicite ao Excel/LibreOffice
@@ -624,7 +705,7 @@ def frame_for_display(result: pd.DataFrame) -> pd.DataFrame:
         frame["value"] = pd.to_numeric(frame["value"], errors="coerce").round(2)
     if "ml_score" in frame.columns:
         frame["ml_score"] = pd.to_numeric(frame["ml_score"], errors="coerce").round(3)
-    for column in ("q1", "q3", "iqr", "lower_fence", "upper_fence", "ml_radius_m"):
+    for column in ("ml_score", "reg_prediction", "reg_residual", "reg_score", "ml_radius_m"):
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce").round(3)
     if "element" in frame.columns:
@@ -784,9 +865,15 @@ def main():
                         polygons = read_polygons(shp.getvalue())
                         sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
                         radius_m = validate_radius(radius_m)
+                        if not (sample["year"].astype(str) == CURRENT_YEAR).any():
+                            raise ValueError("A planilha foi lida, mas não contém registros do ciclo 2026. Verifique se a aba 2026 existe e está dentro do limite SHP.")
+                        if not elements:
+                            raise ValueError("Nenhum elemento numérico elegível foi encontrado para a análise.")
                         result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
                         with st.spinner("Executando LOF espacial no histórico regional..."):
                             lof_result = run_spatial_lof(sample, elements, radius_m)
+                        if not LOF_AVAILABLE:
+                            st.warning(f"LOF indisponível neste ambiente; a regressão espacial continuará ativa. Detalhe: {SKLEARN_IMPORT_ERROR or 'scikit-learn não carregado.'}")
                         if lof_result.empty:
                             result["ml_status"] = "dados insuficientes"
                             result["ml_score"] = np.nan
@@ -796,12 +883,28 @@ def main():
                             result["ml_rule"] = f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m"
                             result["ml_mean_distance_m"] = np.nan
                             result["ml_regional_median"] = np.nan
-                            result["ml_regional_iqr"] = np.nan
                         else:
-                            result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median", "ml_regional_iqr"]], on=["sample_index", "element"], how="left")
+                            result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median"]], on=["sample_index", "element"], how="left")
                             result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
                         result["ml_radius_m"] = result["ml_radius_m"].fillna(radius_m)
                         result["ml_rule"] = result["ml_rule"].fillna(f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m")
+                        with st.spinner("Executando regressão temporal por coordenada..."):
+                            try:
+                                regression_result = run_spatial_regression(sample, elements, radius_m)
+                            except Exception as regression_exc:
+                                regression_result = pd.DataFrame()
+                                st.warning(f"A regressão espacial não pôde ser calculada; os dados foram importados sem classificação temporal: {regression_exc}")
+                        if regression_result.empty:
+                            result["reg_status"] = "dados insuficientes"
+                            result["reg_prediction"] = np.nan
+                            result["reg_residual"] = np.nan
+                            result["reg_score"] = np.nan
+                            result["reg_cycles"] = 0
+                            result["reg_rule"] = f"Regressão não calculada; mínimo={MIN_REGRESSION_CYCLES} ciclos; raio={radius_m:g} m"
+                        else:
+                            result = result.merge(regression_result, on=["sample_index", "element"], how="left")
+                            result["reg_status"] = result["reg_status"].fillna("dados insuficientes")
+                        result["reg_rule"] = result["reg_rule"].fillna(f"Regressão não calculada; mínimo={MIN_REGRESSION_CYCLES} ciclos; raio={radius_m:g} m")
                         result["final_status"] = result.apply(combine_detection, axis=1)
                         result = apply_ph_smp_validation(result)
                         result["display_status"] = result.apply(display_classification, axis=1)
@@ -904,7 +1007,7 @@ def main():
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
     result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>O modelo compara a densidade local dos vizinhos da mesma lavoura.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>IQR regional</strong><p>O valor é comparado às cercas Q1 − 1,5×IQR e Q3 + 1,5×IQR.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>LOF e IQR juntos confirmam; apenas um sinal gera atenção.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>LOF e regressão juntos confirmam; apenas um sinal gera atenção.</p></div></div></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'um critério apontou', 'sand')}{html_stat('outliers 2026', outliers, 'dois critérios confirmaram', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
@@ -918,7 +1021,7 @@ def main():
             render_scatter(chart)
     with c2:
         analysis_radius = float(current.get("radius_m", active_radius))
-        st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>IQR e LOF usam somente a referência histórica da mesma lavoura, elemento e profundidade. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos elegíveis.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · k mínimo {MIN_LOF_NEIGHBORS}</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
     table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]) | (result["ph_smp_status"] == "anomalia: pH > SMP")].copy()
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
