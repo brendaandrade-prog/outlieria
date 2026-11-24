@@ -84,6 +84,32 @@ class OutlieriaSpatialTests(unittest.TestCase):
         self.assertEqual([item[0] for item in series], [2021, 2023])
         self.assertEqual([item[1] for item in series], [4.0, 5.0])
 
+    @unittest.skipUnless(app.LOF_AVAILABLE, "scikit-learn não está instalado neste ambiente")
+    def test_lof_compares_2026_batch_with_historical_distribution_without_id(self):
+        rows = []
+        # A mesma região histórica tem valores próximos de 10. Os IDs mudam
+        # e os pontos de 2026 mudam juntos para 2; o deslocamento coletivo não
+        # pode ser escondido pela densidade interna do lote atual.
+        for year in (2018, 2021, 2023):
+            for i in range(5):
+                rows.append({
+                    "year": str(year), "crop": "L01", "depth": "0-10 cm",
+                    "longitude": -50.0 + i * 0.00001, "latitude": -20.0,
+                    "point_id": f"{year}-{i}", "MO": 10.0 + i * 0.05,
+                })
+        for i in range(2):
+            rows.append({
+                "year": "2026", "crop": "L01", "depth": "0-10 cm",
+                "longitude": -50.0 + i * 0.00001, "latitude": -20.0,
+                "point_id": f"NEW-{i}", "MO": 2.0,
+            })
+        result = app.run_spatial_lof(pd.DataFrame(rows), ["MO"], 300)
+        current = result[result["sample_index"].isin([len(rows) - 2, len(rows) - 1])]
+        self.assertEqual(len(current), 2)
+        self.assertTrue((current["ml_reference_scope"].str.contains("sem pareamento por ID")).all())
+        self.assertTrue((current["ml_current_cohort_shift"] > 3).all())
+        self.assertTrue((current["ml_status"] == "anomalia espacial").all())
+
     def test_ph_above_smp_is_flagged_on_same_point(self):
         result = pd.DataFrame([
             {"sample_index": 10, "element": "pH", "value": 6.2, "final_status": "normal"},

@@ -71,6 +71,8 @@ LOF_FEATURES = [
     "value", "regional_mean", "regional_median",
     "regional_std", "neighbor_count", "mean_distance_m",
     "nearest_distance_m", "difference_median", "z_score",
+    "historical_percentile", "historical_distribution_shift",
+    "current_cohort_shift",
 ]
 
 @dataclass
@@ -348,7 +350,16 @@ def eligible_lof_neighbors(target: pd.Series, reference: pd.DataFrame, element: 
     return candidates.dropna(subset=[element])
 
 
-def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str, radius_m: float, exclude_index=None, minimum_neighbors: int = MIN_LOF_NEIGHBORS):
+def build_lof_features(
+    target: pd.Series,
+    reference: pd.DataFrame,
+    element: str,
+    radius_m: float,
+    exclude_index=None,
+    minimum_neighbors: int = MIN_LOF_NEIGHBORS,
+    cohort_values=None,
+    historical_distribution_values=None,
+):
     """Monta o vetor regional de um ponto usando apenas seu histórico local."""
     neighbors = eligible_lof_neighbors(target, reference, element, radius_m, exclude_index)
     values = neighbors[element]
@@ -358,6 +369,22 @@ def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str,
     mean = values.mean()
     median = values.median()
     std = values.std(ddof=0)
+    percentile = float((values <= value).mean())
+    # A distribuição histórica local é a referência principal.  O segundo
+    # componente é calculado sobre o lote de 2026, mas nunca usa os valores de
+    # 2026 para treinar o modelo: ele mede uma mudança coletiva da região.
+    distribution = pd.to_numeric(pd.Series(
+        historical_distribution_values if historical_distribution_values is not None else values.tolist()
+    ), errors="coerce").dropna()
+    distribution_median = float(distribution.median()) if not distribution.empty else float(median)
+    distribution_mad = float(np.median(np.abs(distribution - distribution_median))) if not distribution.empty else 0.0
+    distribution_scale = max(1.4826 * distribution_mad, float(distribution.std(ddof=0)) if len(distribution) > 1 else 0.0, 1e-6)
+    historical_shift = abs(float(value) - distribution_median) / distribution_scale
+    cohort_shift = 0.0
+    if cohort_values is not None:
+        cohort = pd.to_numeric(pd.Series(cohort_values), errors="coerce").dropna()
+        if not cohort.empty:
+            cohort_shift = abs(float(cohort.median()) - distribution_median) / distribution_scale
     return {
         "value": float(value),
         "regional_mean": float(mean),
@@ -368,6 +395,9 @@ def build_lof_features(target: pd.Series, reference: pd.DataFrame, element: str,
         "nearest_distance_m": float(neighbors["distance_m"].min()),
         "difference_median": float(value - median),
         "z_score": float((value - mean) / std) if std > 0 else 0.0,
+        "historical_percentile": percentile,
+        "historical_distribution_shift": float(historical_shift),
+        "current_cohort_shift": float(cohort_shift),
     }
 
 
@@ -395,25 +425,51 @@ def train_lof_group(historical: pd.DataFrame, element: str, radius_m: float, min
     return {"model": model, "scaler": scaler, "threshold": float(np.percentile(historical_scores, LOF_THRESHOLD_PERCENTILE)), "n_neighbors": n_neighbors}
 
 
-def score_lof_current(current: pd.DataFrame, historical: pd.DataFrame, element: str, radius_m: float, trained: dict, minimum_neighbors: int = MIN_LOF_NEIGHBORS):
+def score_lof_current(
+    current: pd.DataFrame,
+    historical: pd.DataFrame,
+    element: str,
+    radius_m: float,
+    trained: dict,
+    minimum_neighbors: int = MIN_LOF_NEIGHBORS,
+    cohort_values=None,
+    historical_distribution_values=None,
+):
     predictions = []
     for index, target in current.iterrows():
-        features = build_lof_features(target, historical, element, radius_m, minimum_neighbors=minimum_neighbors)
+        features = build_lof_features(
+            target, historical, element, radius_m,
+            minimum_neighbors=minimum_neighbors,
+            cohort_values=cohort_values,
+            historical_distribution_values=historical_distribution_values,
+        )
         if features is None:
             continue
         vector = pd.DataFrame([features])[LOF_FEATURES].replace([np.inf, -np.inf], np.nan)
         if vector.isna().any().any():
             continue
         score = float(-trained["model"].score_samples(trained["scaler"].transform(vector))[0])
+        collective_shift = float(features["current_cohort_shift"])
+        distribution_shift = float(features["historical_distribution_shift"])
+        # O LOF tradicional pode considerar vários pontos igualmente baixos
+        # como uma região densa e, portanto, normal.  O deslocamento robusto
+        # abaixo preserva a decisão do LOF, mas impede que uma mudança coletiva
+        # em 2026 seja escondida pela densidade interna do próprio ciclo.
+        collective_anomaly = max(collective_shift, distribution_shift) >= 3.0
+        is_anomaly = score >= trained["threshold"] or collective_anomaly
         predictions.append({
             "sample_index": index, "element": element, "ml_score": score,
-            "ml_status": "anomalia espacial" if score >= trained["threshold"] else "normal",
+            "ml_status": "anomalia espacial" if is_anomaly else "normal",
             "ml_neighbor_count": features["neighbor_count"],
             "ml_k_effective": trained["n_neighbors"],
             "ml_radius_m": radius_m,
-            "ml_rule": f"LOF ≥ percentil {LOF_THRESHOLD_PERCENTILE:g} dos scores históricos; k={trained['n_neighbors']}; raio={radius_m:g} m",
+            "ml_rule": f"LOF ≥ percentil {LOF_THRESHOLD_PERCENTILE:g} ou deslocamento histórico robusto ≥ 3; k={trained['n_neighbors']}; raio={radius_m:g} m",
+            "ml_reference_scope": "conjunto 2026 comparado à distribuição histórica espacial da mesma região; sem pareamento por ID",
             "ml_mean_distance_m": features["mean_distance_m"],
             "ml_regional_median": features["regional_median"],
+            "ml_historical_percentile": features["historical_percentile"],
+            "ml_historical_distribution_shift": distribution_shift,
+            "ml_current_cohort_shift": collective_shift,
         })
     return pd.DataFrame(predictions)
 
@@ -442,10 +498,23 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
                     neighbors = eligible_lof_neighbors(target, historical_group, element, radius_m)
                     neighbor_count = len(neighbors)
                     if neighbor_count < MIN_LOF_NEIGHBORS:
-                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: {neighbor_count} vizinhos elegíveis; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan})
+                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: {neighbor_count} vizinhos elegíveis; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan, "ml_reference_scope": "distribuição histórica espacial da mesma região", "ml_historical_percentile": np.nan, "ml_historical_distribution_shift": np.nan, "ml_current_cohort_shift": np.nan})
                     elif trained is None:
-                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: histórico treinável insuficiente para k≥{MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan})
-                scored = score_lof_current(current_group, historical_group, element, radius_m, trained, MIN_LOF_NEIGHBORS) if trained is not None else pd.DataFrame()
+                        fallback_rows.append({"sample_index": current_index, "element": element, "ml_status": "dados insuficientes", "ml_score": np.nan, "ml_neighbor_count": neighbor_count, "ml_k_effective": np.nan, "ml_radius_m": radius_m, "ml_rule": f"LOF não calculado: histórico treinável insuficiente para k≥{MIN_LOF_NEIGHBORS}; raio={radius_m:g} m", "ml_mean_distance_m": np.nan, "ml_regional_median": np.nan, "ml_reference_scope": "distribuição histórica espacial da mesma região", "ml_historical_percentile": np.nan, "ml_historical_distribution_shift": np.nan, "ml_current_cohort_shift": np.nan})
+                # Monta uma distribuição histórica espacial única para o lote
+                # de 2026. Cada registro histórico entra no conjunto uma vez,
+                # mesmo que seja vizinho de mais de um ponto atual.
+                historical_distribution = []
+                current_values = pd.to_numeric(current_group[element], errors="coerce").dropna().tolist()
+                for _, current_target in current_group.iterrows():
+                    local = eligible_lof_neighbors(current_target, historical_group, element, radius_m)
+                    historical_distribution.extend(local[element].tolist())
+                historical_distribution = pd.to_numeric(pd.Series(historical_distribution), errors="coerce").dropna().drop_duplicates().tolist()
+                scored = score_lof_current(
+                    current_group, historical_group, element, radius_m, trained,
+                    MIN_LOF_NEIGHBORS, cohort_values=current_values,
+                    historical_distribution_values=historical_distribution,
+                ) if trained is not None else pd.DataFrame()
                 if fallback_rows:
                     scored = pd.concat([scored, pd.DataFrame(fallback_rows)], ignore_index=True)
                 if not scored.empty:
@@ -891,8 +960,12 @@ def main():
                             result["ml_rule"] = f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m"
                             result["ml_mean_distance_m"] = np.nan
                             result["ml_regional_median"] = np.nan
+                            result["ml_reference_scope"] = "distribuição histórica espacial da mesma região; sem pareamento por ID"
+                            result["ml_historical_percentile"] = np.nan
+                            result["ml_historical_distribution_shift"] = np.nan
+                            result["ml_current_cohort_shift"] = np.nan
                         else:
-                            result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median"]], on=["sample_index", "element"], how="left")
+                            result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median", "ml_reference_scope", "ml_historical_percentile", "ml_historical_distribution_shift", "ml_current_cohort_shift"]], on=["sample_index", "element"], how="left")
                             result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
                         result["ml_radius_m"] = result["ml_radius_m"].fillna(radius_m)
                         result["ml_rule"] = result["ml_rule"].fillna(f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m")
