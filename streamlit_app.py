@@ -456,13 +456,17 @@ def run_spatial_lof(sample: pd.DataFrame, elements: list[str], radius_m: float) 
 
 
 def combine_detection(row):
-    # Dois critérios independentes: LOF espacial e regressão temporal espacial.
+    # Cada sinal deve ser exibido independentemente; a combinação apenas
+    # diferencia uma confirmação de uma anomalia detectada por um critério.
     ml_outlier = row.get("ml_status") == "anomalia espacial"
     regression_outlier = row.get("reg_status") == "anomalia temporal"
-    criteria_count = sum((ml_outlier, regression_outlier))
-    if criteria_count == 2:
+    if ml_outlier and regression_outlier:
         return "outlier confirmado"
-    if criteria_count == 1 or row.get("status") == "atenção":
+    if regression_outlier:
+        return "anomalia temporal"
+    if ml_outlier:
+        return "anomalia espacial"
+    if row.get("status") == "atenção":
         return "atenção"
     return "normal"
 
@@ -576,7 +580,7 @@ def display_classification(row: pd.Series) -> str:
         return "anomalia (pH > SMP)"
     if row.get("final_status") == "outlier confirmado":
         return "outlier"
-    if row.get("final_status") == "atenção":
+    if row.get("final_status") in {"atenção", "anomalia temporal", "anomalia espacial"}:
         return "anomalia"
     return "normal"
 
@@ -752,7 +756,7 @@ def render_scatter(result: pd.DataFrame) -> None:
     def sy(y): return top + ((y_max - y) / (y_max - y_min)) * (height - top - bottom)
     def tick_text(value, step):
         return f"{value:.1f}" if step == 0.5 else f"{value:.0f}"
-    colors = {"outlier confirmado": "#c94b35", "outlier estatístico": "#d8793e", "anomalia espacial": "#7656a8", "outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
+    colors = {"outlier confirmado": "#c94b35", "outlier estatístico": "#d8793e", "anomalia temporal": "#bd6b37", "anomalia espacial": "#7656a8", "outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
     circles = []
     for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
         status = str(row.get("final_status", row.get("status", "normal"))); color = colors.get(status, "#487c80")
@@ -908,7 +912,7 @@ def main():
                         result["final_status"] = result.apply(combine_detection, axis=1)
                         result = apply_ph_smp_validation(result)
                         result["display_status"] = result.apply(display_classification, axis=1)
-                        evidence = result[result.final_status == "outlier confirmado"].copy()
+                        evidence = result[result.final_status.isin(["outlier confirmado", "anomalia temporal", "anomalia espacial"])].copy()
                         attention = result[result.final_status == "atenção"].copy()
                         export_evidence = pd.concat([
                             evidence,
@@ -930,7 +934,7 @@ def main():
                         else:
                             missing = ", ".join(missing_settings())
                             st.warning(f"A análise foi processada somente nesta sessão. Configure estas Secrets no Streamlit Cloud para ativar o Supabase e o Google Drive: {missing}.")
-                        st.success(f"Aba 2026 atualizada: {len(evidence)} outliers e {len(attention)} pontos em atenção.")
+                        st.success(f"Aba 2026 atualizada: {len(evidence)} pontos sinalizados e {len(attention)} pontos em atenção.")
                     except Exception as exc: st.exception(exc)
         st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
@@ -1005,10 +1009,10 @@ def main():
         st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
         return
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
-    result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
-    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>LOF e regressão juntos confirmam; apenas um sinal gera atenção.</p></div></div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'um critério apontou', 'sand')}{html_stat('outliers 2026', outliers, 'dois critérios confirmaram', 'orange')}</div>", unsafe_allow_html=True)
+    result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia temporal":"anomalia temporal", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
+    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int(result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia temporal", "anomalia espacial"]).sum()); attention = int((result.final_status == "atenção").sum()); crops = result.crop.nunique()
+    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Sinais do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Classificação</strong><p>Cada anomalia é exibida sozinha; LOF + regressão gera confirmação.</p></div></div></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('atenção', attention, 'sinal sem classificação principal', 'sand')}{html_stat('pontos sinalizados', outliers, 'LOF ou regressão detectaram', 'orange')}</div>", unsafe_allow_html=True)
     c1, c2 = st.columns([3,1])
     with c1:
         st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
@@ -1023,7 +1027,7 @@ def main():
         analysis_radius = float(current.get("radius_m", active_radius))
         st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia espacial"]) | (result["ph_smp_status"] == "anomalia: pH > SMP")].copy()
+    table = result[result.final_status.isin(["outlier confirmado", "outlier estatístico", "anomalia temporal", "anomalia espacial", "atenção"]) | (result["ph_smp_status"] == "anomalia: pH > SMP")].copy()
     # Estado visual original da tabela nativa; os três selects permanecem como filtros.
     header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
     with header_filters[1]:

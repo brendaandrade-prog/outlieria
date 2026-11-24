@@ -48,8 +48,11 @@ class OutlieriaSpatialTests(unittest.TestCase):
         base = {"status": "normal", "ml_status": "anomalia espacial", "reg_status": "anomalia temporal"}
         self.assertEqual(app.combine_detection(base), "outlier confirmado")
         base["ml_status"] = "normal"
-        self.assertEqual(app.combine_detection(base), "atenção")
+        self.assertEqual(app.combine_detection(base), "anomalia temporal")
         base["reg_status"] = "normal"
+        base["ml_status"] = "anomalia espacial"
+        self.assertEqual(app.combine_detection(base), "anomalia espacial")
+        base["ml_status"] = "normal"
         self.assertEqual(app.combine_detection(base), "normal")
 
     def test_spatial_regression_does_not_pair_by_point_id(self):
