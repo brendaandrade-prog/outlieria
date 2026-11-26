@@ -923,6 +923,16 @@ def main():
     st.set_page_config(page_title="Outlieria", page_icon="◌", layout="wide", initial_sidebar_state="expanded")
     inject_style()
     if "analyses" not in st.session_state: st.session_state.analyses = []
+    # O Streamlit reexecuta o script ao trocar a navegação. Mantemos um
+    # snapshot explícito da visão para que essa reexecução não apague os dados
+    # exibidos; ele só é substituído quando uma nova análise é processada.
+    if "vision_2026_result" not in st.session_state:
+        st.session_state.vision_2026_result = (
+            pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
+            if st.session_state.analyses else None
+        )
+    if "vision_2026_revision" not in st.session_state:
+        st.session_state.vision_2026_revision = 0
     active_radius = float(st.session_state.analyses[-1].get("radius_m", MAX_DISTANCE_M)) if st.session_state.analyses else MAX_DISTANCE_M
     with st.sidebar:
         st.markdown("<div class='brand'><span class='brand-mark'></span><span>outlieria</span></div>", unsafe_allow_html=True)
@@ -1016,6 +1026,13 @@ def main():
                         farm_name = str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda"
                         area_ha = sum(p.area_ha for p in polygons)
                         st.session_state.analyses.append({"name": excel.name, "original": original_bytes, "shp_bytes": shp_bytes, "radius_m": radius_m, "result": result, "evidence": evidence, "attention": attention, "polygons": polygons, "elements": elements})
+                        # A troca de aba mantém este snapshot. A inserção de
+                        # novos arquivos é o único evento que atualiza a visão.
+                        st.session_state.vision_2026_result = pd.concat(
+                            [analysis["result"] for analysis in st.session_state.analyses],
+                            ignore_index=True,
+                        ).copy()
+                        st.session_state.vision_2026_revision += 1
                         if cloud_storage_configured():
                             try:
                                 persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel.name, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention), lof_min_neighbors=MIN_LOF_NEIGHBORS)
@@ -1060,7 +1077,7 @@ def main():
         st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
         return
     current = st.session_state.analyses[-1]
-    result = pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
+    result = st.session_state.vision_2026_result.copy()
     result = result[~result.element.map(is_ignored_element)].copy()
     if "ml_status" not in result.columns:
         result["ml_status"] = "dados insuficientes"
@@ -1088,11 +1105,11 @@ def main():
     filter_col1, filter_col2 = st.columns(2)
     client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
     with filter_col1:
-        selected_client = st.selectbox("Cliente", client_options, key="analysis_client")
+        selected_client = st.selectbox("Cliente", client_options, key=f"analysis_client_{st.session_state.vision_2026_revision}")
     farm_source = result[result.client.astype(str) == selected_client] if selected_client != "Todos" else result.iloc[0:0]
     farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Selecione uma fazenda"] + ordered_unique(farm_source.farm)
     with filter_col2:
-        selected_farm = st.selectbox("Fazenda", farm_options, key="analysis_farm", disabled=selected_client == "Todos")
+        selected_farm = st.selectbox("Fazenda", farm_options, key=f"analysis_farm_{st.session_state.vision_2026_revision}", disabled=selected_client == "Todos")
     if selected_client == "Todos" or selected_farm in {"Selecione um cliente", "Selecione uma fazenda"}:
         st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
         return
