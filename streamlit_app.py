@@ -182,7 +182,8 @@ def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
     field_keys = {normalise_header_key(name): name for name in field_names}
     producer_field = next((field_keys[key] for key in ("PRODUTOR", "PRODUCER") if key in field_keys), None)
     farm_field = next((field_keys[key] for key in ("FAZENDA", "FARM", "PROPERTY") if key in field_keys), None)
-    field_field = next((field_keys[key] for key in ("CAMPO", "FIELD", "LAVOURA") if key in field_keys), None)
+    # Para o gráfico, somente o atributo CAMPO do SHP é válido.
+    field_field = field_keys.get("CAMPO")
     records = []
     for index, shp in enumerate(shapes):
         geometry = shapely_shape(shp.__geo_interface__)
@@ -989,8 +990,8 @@ def process_source_bytes(original_bytes: bytes, shp_bytes: bytes, radius_m: floa
     result["client"] = client_name
     result["farm"] = farm_name
     shp_fields = {index: polygon.field_name.strip() for index, polygon in enumerate(polygons) if polygon.field_name.strip()}
-    if shp_fields and "polygon_index" in result.columns:
-        result["crop"] = result["polygon_index"].map(shp_fields).fillna(result["crop"])
+    if "polygon_index" in result.columns:
+        result["graph_crop"] = result["polygon_index"].map(shp_fields).fillna("Campo não informado")
     evidence = select_evidence(result)
     attention = result[result.final_status == "atenção"].copy()
     return {"polygons": polygons, "result": result, "evidence": evidence, "attention": attention, "client_name": client_name, "farm_name": farm_name, "area_ha": sum(p.area_ha for p in polygons), "elements": elements, "radius_m": radius_m}
@@ -1138,16 +1139,16 @@ def render_scatter(result: pd.DataFrame, y_domain: tuple[float, float] | None = 
     left, right, top, bottom = 145, 16, 18, 72
     # O eixo X é organizado em blocos por lavoura, preservando a ordem em que
     # as lavouras aparecem na planilha e delimitando visualmente cada região.
-    if "crop" in points.columns:
-        crop_order = ordered_unique(points["crop"].fillna("Sem lavoura"))
+    if "graph_crop" in points.columns:
+        crop_order = ordered_unique(points["graph_crop"].fillna("Campo não informado"))
     else:
-        crop_order = ["Sem lavoura"]
-        points["crop"] = "Sem lavoura"
+        crop_order = ["Campo não informado"]
+        points["graph_crop"] = "Campo não informado"
     ordered_parts = []
     crop_regions = []
     cursor = 0
     for crop_name in crop_order:
-        crop_points = points[points["crop"].astype(str) == str(crop_name)].copy()
+        crop_points = points[points["graph_crop"].astype(str) == str(crop_name)].copy()
         if crop_points.empty:
             continue
         crop_points = crop_points.sort_values("source_row", kind="stable")
@@ -1515,10 +1516,10 @@ def main():
             element = st.selectbox("Elemento", element_options, format_func=element_label, label_visibility="collapsed")
             depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
             chart = result[(result.element == element) & (result.depth == depth)].copy()
-            crop_options = ["Todas"] + ordered_unique(chart.get("crop", pd.Series(dtype=object)))
+            crop_options = ["Todas"] + ordered_unique(chart.get("graph_crop", pd.Series(dtype=object)))
             selected_chart_crop = st.selectbox("Lavoura", crop_options, key="vision_chart_crop", label_visibility="collapsed")
             if selected_chart_crop != "Todas":
-                chart = chart[chart.crop.astype(str) == str(selected_chart_crop)].copy()
+                chart = chart[chart.graph_crop.astype(str) == str(selected_chart_crop)].copy()
             if not chart.empty:
                 element_values = pd.to_numeric(result.loc[result.element == element, "value"], errors="coerce").dropna()
                 y_domain = (float(element_values.min()), float(element_values.max())) if not element_values.empty else None
