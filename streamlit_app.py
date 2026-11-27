@@ -1229,12 +1229,23 @@ def main():
         st.markdown("<div class='rail-caption'>análise agrícola</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · {active_radius:g} m</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>PAINEL 2026</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
-    vision_tab, sources_tab = st.tabs(["Visão 2026", "Fontes"])
-    with sources_tab:
+    with st.sidebar:
+        page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
+    if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1.25, 1.25, 1.25])
         with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
         with c2: shp = st.file_uploader("Limite SHP ou ZIP", type=["shp", "zip"], key="shp")
+        if excel:
+            st.session_state.uploaded_excel_bytes = excel.getvalue()
+            st.session_state.uploaded_excel_name = excel.name
+        if shp:
+            st.session_state.uploaded_shp_bytes = shp.getvalue()
+            st.session_state.uploaded_shp_name = shp.name
+        excel_bytes = st.session_state.get("uploaded_excel_bytes", b"")
+        shp_bytes_cached = st.session_state.get("uploaded_shp_bytes", b"")
+        excel_name = st.session_state.get("uploaded_excel_name", "analise.xlsx")
+        shp_name_cached = st.session_state.get("uploaded_shp_name", "limite.shp")
         with c3:
             radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto. Utilize sempre o raio do maior grid para a comparação.", key="radius_m")
         if not LOF_AVAILABLE:
@@ -1250,13 +1261,13 @@ def main():
         with action_right:
             ready = st.button("✓  Pronto", type="primary", use_container_width=False)
         if ready:
-            if not excel or not shp: st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
+            if not excel_bytes or not shp_bytes_cached: st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
             else:
                 with st.spinner("Processando Excel, SHP, histórico e localização..."):
                     try:
-                        polygons = read_polygons(shp.getvalue())
+                        polygons = read_polygons(shp_bytes_cached)
                         shp_producer, shp_farm = shp_source_names(polygons)
-                        sample, elements, _ = parse_workbook(excel.getvalue(), polygons, shp_producer, shp_farm)
+                        sample, elements, _ = parse_workbook(excel_bytes, polygons, shp_producer, shp_farm)
                         radius_m = validate_radius(radius_m)
                         if not (sample["year"].astype(str) == CURRENT_YEAR).any():
                             raise ValueError("A planilha foi lida, mas não contém registros do ciclo 2026. Verifique se a aba 2026 existe e está dentro do limite SHP.")
@@ -1317,14 +1328,14 @@ def main():
                         evidence = select_evidence(result)
                         attention = result[result.final_status == "atenção"].copy()
                         export_evidence = evidence.copy()
-                        original_bytes = excel.getvalue()
-                        shp_bytes = shp.getvalue()
+                        original_bytes = excel_bytes
+                        shp_bytes = shp_bytes_cached
                         reanalysis_bytes = export_individual(original_bytes, export_evidence, radius_m)
                         area_ha = sum(p.area_ha for p in polygons)
                         persisted_metadata = {}
                         if database_configured():
                             try:
-                                persisted_metadata = persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel.name, shp_name=shp.name, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention), result=result, lof_min_neighbors=MIN_LOF_NEIGHBORS) or {}
+                                persisted_metadata = persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel_name, shp_name=shp_name_cached, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention), result=result, lof_min_neighbors=MIN_LOF_NEIGHBORS) or {}
                                 if cloud_storage_configured():
                                     st.success("Análise atualizada no Supabase e no Google Drive.")
                                 else:
@@ -1337,9 +1348,9 @@ def main():
                         record = {
                             "analysis_id": persisted_metadata.get("analysis_id"),
                             "source_hash": persisted_metadata.get("source_hash") or sha256(original_bytes + shp_bytes),
-                            "analysis_key": analysis_identity_key(client_name, farm_name, excel.name, shp.name),
-                            "name": excel.name,
-                            "shp_name": shp.name,
+                            "analysis_key": analysis_identity_key(client_name, farm_name, excel_name, shp_name_cached),
+                            "name": excel_name,
+                            "shp_name": shp_name_cached,
                             "client_name": client_name,
                             "farm_name": farm_name,
                             "original": original_bytes,
@@ -1417,7 +1428,7 @@ def main():
                             except Exception as deletion_exc:
                                 st.error(f"Não foi possível excluir a análise: {deletion_exc}")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
-    with vision_tab:
+    if page == "Visão 2026":
         if not st.session_state.analyses:
             st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
             st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
@@ -1519,7 +1530,6 @@ def main():
         if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
         if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
         st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
-
 
 if __name__ == "__main__":
     main()
