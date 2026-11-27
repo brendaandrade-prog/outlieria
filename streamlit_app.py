@@ -1249,7 +1249,7 @@ def render_scatter(result: pd.DataFrame, y_domain: tuple[float, float] | None = 
     st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Gráfico de dispersão"><style>.point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}<g class="outlieria-tooltips">{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
 
 
-def render_spatial_map(result: pd.DataFrame) -> None:
+def render_spatial_map(result: pd.DataFrame, polygons: list[PolygonRecord] | None = None, zoom: float = 1.0) -> None:
     """Renderiza a posição geográfica dos pontos em escala aproximada de metros.
 
     A longitude é convertida usando a latitude média da seleção e a latitude
@@ -1277,14 +1277,34 @@ def render_spatial_map(result: pd.DataFrame) -> None:
     meters_per_degree_lon = 111_320.0 * math.cos(math.radians(mean_lat))
     points["x_m"] = (points["longitude"] - lon0) * meters_per_degree_lon
     points["y_m"] = (points["latitude"] - lat0) * meters_per_degree_lat
-    x_raw_min, x_raw_max = float(points["x_m"].min()), float(points["x_m"].max())
-    y_raw_min, y_raw_max = float(points["y_m"].min()), float(points["y_m"].max())
+    boundary_rings = []
+    for polygon in polygons or []:
+        geometry = getattr(polygon, "geometry", None)
+        for shape in getattr(geometry, "geoms", [geometry]) if geometry is not None else []:
+            if hasattr(shape, "exterior"):
+                ring = [
+                    ((float(x) - lon0) * meters_per_degree_lon, (float(y) - lat0) * meters_per_degree_lat)
+                    for x, y in shape.exterior.coords
+                ]
+                if ring:
+                    boundary_rings.append(ring)
+    x_values = list(points["x_m"]) + [x for ring in boundary_rings for x, _ in ring]
+    y_values = list(points["y_m"]) + [y for ring in boundary_rings for _, y in ring]
+    x_raw_min, x_raw_max = min(x_values), max(x_values)
+    y_raw_min, y_raw_max = min(y_values), max(y_values)
     x_span = max(x_raw_max - x_raw_min, 1.0)
     y_span = max(y_raw_max - y_raw_min, 1.0)
     # Margem em metros para que os marcadores não fiquem colados na borda.
     margin = max(x_span, y_span) * 0.08
-    x_min, x_max = x_raw_min - margin, x_raw_max + margin
-    y_min, y_max = y_raw_min - margin, y_raw_max + margin
+    base_x_min, base_x_max = x_raw_min - margin, x_raw_max + margin
+    base_y_min, base_y_max = y_raw_min - margin, y_raw_max + margin
+    zoom = max(float(zoom), 1.0)
+    center_x = float(points["x_m"].mean())
+    center_y = float(points["y_m"].mean())
+    x_min = center_x - (base_x_max - base_x_min) / (2 * zoom)
+    x_max = center_x + (base_x_max - base_x_min) / (2 * zoom)
+    y_min = center_y - (base_y_max - base_y_min) / (2 * zoom)
+    y_max = center_y + (base_y_max - base_y_min) / (2 * zoom)
     plot_width, plot_height = width - left - right, height - top - bottom
     scale = min(plot_width / (x_max - x_min), plot_height / (y_max - y_min))
     map_width, map_height = (x_max - x_min) * scale, (y_max - y_min) * scale
@@ -1302,6 +1322,10 @@ def render_spatial_map(result: pd.DataFrame) -> None:
     grid_parts.append(f'<text x="{offset_x + map_width / 2:.1f}" y="{height - 12}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">posição leste–oeste (m)</text>')
     axis_label_x = max(38.0, offset_x - 28.0)
     grid_parts.append(f'<text x="{axis_label_x:.1f}" y="{offset_y + map_height / 2:.1f}" text-anchor="middle" transform="rotate(-90 {axis_label_x:.1f} {offset_y + map_height / 2:.1f})" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">posição norte–sul (m)</text>')
+    boundaries = "".join(
+        f'<polyline points="{" ".join(f"{sx(x):.1f},{sy(y):.1f}" for x, y in ring)}" fill="#cbd4c4" fill-opacity="0.12" stroke="#91a18f" stroke-opacity="0.62" stroke-width="1.2" stroke-dasharray="4 3"/>'
+        for ring in boundary_rings
+    )
 
     circles, tooltips = [], []
     for point_index, (_, row) in enumerate(points.iterrows()):
@@ -1315,7 +1339,7 @@ def render_spatial_map(result: pd.DataFrame) -> None:
         tooltips.append(f'<g class="spatial-tooltip spatial-tooltip-{point_index}"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="158" height="62" rx="5" fill="#ffffff" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">CAMPO: {crop_name}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 40:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {float(row["value"]):.2f}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 53:.1f}" font-family="IBM Plex Mono, monospace" font-size="8" fill="#7656a8">{html.escape(status)}</text></g>')
     hover_rules = "".join(f'.outlieria-spatial-svg:has(.spatial-point-{index}:hover) .spatial-tooltip-{index}{{opacity:1}}' for index in range(len(circles)))
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="9"><circle cx="13" cy="28" r="4" fill="#b79b43"/><text x="23" y="31" fill="#6f7c76">atenção</text><circle cx="13" cy="48" r="4" fill="#d8793e"/><text x="23" y="51" fill="#6f7c76">outlier 2026</text><circle cx="13" cy="68" r="4" fill="#7656a8"/><text x="23" y="71" fill="#6f7c76">anomalia</text></g>'
-    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-spatial-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Mapa espacial dos pontos"><style>.spatial-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{"".join(grid_parts)}{"".join(circles)}<g>{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-spatial-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Mapa espacial dos pontos" style="overflow:hidden"><style>.spatial-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{"".join(grid_parts)}{boundaries}{"".join(circles)}<g>{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
 
 
 def format_source_timestamp(value: object) -> str:
@@ -1601,6 +1625,11 @@ def main():
             return
         result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia temporal":"anomalia temporal", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
         points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); crops = result.crop.nunique()
+        selected_polygons = []
+        for analysis in st.session_state.analyses:
+            analysis_result = analysis.get("result")
+            if str(analysis.get("client_name", "")) == selected_client and str(analysis.get("farm_name", "")) == selected_farm:
+                selected_polygons.extend(analysis.get("polygons") or [])
         st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>Qualquer diferença temporal espacial detectada gera outlier; o LOF também pode gerar o sinal.</p></div></div></div>", unsafe_allow_html=True)
         st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('regra', 'LOF + regressão', 'confirmação simultânea', 'sand')}{html_stat('outliers confirmados', outliers, 'únicos exibidos', 'orange')}</div>", unsafe_allow_html=True)
         c1, c2 = st.columns([3,1])
@@ -1621,7 +1650,24 @@ def main():
                 y_domain = (float(element_values.min()), float(element_values.max())) if not element_values.empty else None
                 render_scatter(chart, y_domain=y_domain)
                 st.markdown("<div class='section-kicker' style='margin-top:18px'>02 / posição espacial</div><h3 style='margin-top:4px'>Onde estão os pontos selecionados</h3><p class='lead' style='font-size:12px'>Posição relativa em metros, preservando a proximidade geográfica entre longitude e latitude. A escala é igual nos dois eixos.</p>", unsafe_allow_html=True)
-                render_spatial_map(chart)
+                if "spatial_zoom" not in st.session_state:
+                    st.session_state.spatial_zoom = 1.0
+                zoom_in, zoom_out, zoom_reset, zoom_label = st.columns([0.7, 0.7, 0.9, 3.2])
+                with zoom_in:
+                    if st.button("＋", key="spatial_zoom_in", help="Aproximar o mapa"):
+                        st.session_state.spatial_zoom = min(8.0, round(st.session_state.spatial_zoom * 1.5, 2))
+                        st.rerun()
+                with zoom_out:
+                    if st.button("−", key="spatial_zoom_out", help="Afastar o mapa"):
+                        st.session_state.spatial_zoom = max(1.0, round(st.session_state.spatial_zoom / 1.5, 2))
+                        st.rerun()
+                with zoom_reset:
+                    if st.button("↺  Resetar", key="spatial_zoom_reset"):
+                        st.session_state.spatial_zoom = 1.0
+                        st.rerun()
+                with zoom_label:
+                    st.caption(f"Zoom {st.session_state.spatial_zoom:g}× · limite do SHP em segundo plano")
+                render_spatial_map(chart, polygons=selected_polygons, zoom=st.session_state.spatial_zoom)
         with c2:
             analysis_radius = float(current.get("radius_m", active_radius))
             st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
