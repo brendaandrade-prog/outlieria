@@ -1124,7 +1124,8 @@ def render_scatter(result: pd.DataFrame) -> None:
     if points.empty:
         return
     width, height = 820, 280
-    left, right, top, bottom = 48, 16, 18, 38
+    # Reserva uma coluna própria para a legenda, sem sobreposição com o gráfico.
+    left, right, top, bottom = 145, 16, 18, 38
     x_values = pd.to_numeric(points["source_row"], errors="coerce").fillna(0).to_numpy(dtype=float)
     y_values = pd.to_numeric(points["value"], errors="coerce").to_numpy(dtype=float)
     raw_x_min, raw_x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
