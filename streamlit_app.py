@@ -1406,10 +1406,10 @@ def main():
                         if analysis.get("original"):
                             st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], export_rows, float(analysis.get("radius_m", MAX_DISTANCE_M))), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis_index}_{analysis['name']}")
                         elif analysis.get("file_urls", {}).get("reanálise_2026"):
-                            st.link_button("↗  ABRIR REANÁLISE", analysis["file_urls"]["reanálise_2026"], use_container_width=True)
+                            st.link_button("↗  BAIXAR PLANILHA", analysis["file_urls"]["reanálise_2026"], use_container_width=True)
                         else:
                             st.caption("arquivo original não disponível")
-                        if st.button("Excluir", key=f"delete_{analysis_index}_{analysis.get('analysis_id') or analysis['name']}", use_container_width=True):
+                        if st.button("Excluir arquivos", key=f"delete_{analysis_index}_{analysis.get('analysis_id') or analysis['name']}", use_container_width=True):
                             try:
                                 deletion = None
                                 if analysis.get("analysis_id"):
