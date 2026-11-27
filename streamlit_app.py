@@ -25,6 +25,7 @@ from cloud_storage import (
     configured as cloud_storage_configured,
     database_configured,
     delete_analysis,
+    download_persisted_source,
     load_persisted_analyses,
     missing_settings,
     persist_analysis,
@@ -923,6 +924,65 @@ def normalise_result_frame(result: pd.DataFrame, radius_m: float = MAX_DISTANCE_
     return frame
 
 
+def process_source_bytes(original_bytes: bytes, shp_bytes: bytes, radius_m: float) -> dict[str, object]:
+    """Processa uma fonte completa sem depender de widgets Streamlit."""
+    polygons = read_polygons(shp_bytes)
+    shp_producer, shp_farm = shp_source_names(polygons)
+    sample, elements, _ = parse_workbook(original_bytes, polygons, shp_producer, shp_farm)
+    radius_m = validate_radius(radius_m)
+    if not (sample["year"].astype(str) == CURRENT_YEAR).any():
+        raise ValueError("A planilha não contém registros do ciclo 2026.")
+    if not elements:
+        raise ValueError("Nenhum elemento numérico elegível foi encontrado para a análise.")
+    result, _, _ = classify(sample, elements, radius_m)
+    result = locate_ibge(result)
+    lof_result = run_spatial_lof(sample, elements, radius_m)
+    if lof_result.empty:
+        result["ml_status"] = "dados insuficientes"
+        result["ml_score"] = np.nan
+        result["ml_neighbor_count"] = np.nan
+        result["ml_k_effective"] = np.nan
+        result["ml_radius_m"] = radius_m
+        result["ml_rule"] = f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m"
+        result["ml_mean_distance_m"] = np.nan
+        result["ml_regional_median"] = np.nan
+        result["ml_reference_scope"] = "distribuição histórica espacial da mesma região; sem pareamento por ID"
+        result["ml_historical_percentile"] = np.nan
+        result["ml_historical_distribution_shift"] = np.nan
+        result["ml_current_cohort_shift"] = np.nan
+    else:
+        lof_columns = ["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median", "ml_reference_scope", "ml_historical_percentile", "ml_historical_distribution_shift", "ml_current_cohort_shift"]
+        result = result.merge(lof_result[lof_columns], on=["sample_index", "element"], how="left")
+        result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
+    result["ml_radius_m"] = result["ml_radius_m"].fillna(radius_m)
+    result["ml_rule"] = result["ml_rule"].fillna(f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m")
+    try:
+        regression_result = run_spatial_regression(sample, elements, radius_m)
+    except Exception:
+        regression_result = pd.DataFrame()
+    if regression_result.empty:
+        result["reg_status"] = "dados insuficientes"
+        result["reg_prediction"] = np.nan
+        result["reg_residual"] = np.nan
+        result["reg_score"] = np.nan
+        result["reg_cycles"] = 0
+        result["reg_rule"] = f"Regressão não calculada; mínimo={MIN_REGRESSION_CYCLES} ciclos; raio={radius_m:g} m"
+    else:
+        result = result.merge(regression_result, on=["sample_index", "element"], how="left")
+        result["reg_status"] = result["reg_status"].fillna("dados insuficientes")
+    result["reg_rule"] = result["reg_rule"].fillna(f"Regressão não calculada; mínimo={MIN_REGRESSION_CYCLES} ciclos; raio={radius_m:g} m")
+    result["final_status"] = result.apply(combine_detection, axis=1)
+    result = apply_ph_smp_validation(result)
+    result["display_status"] = result.apply(display_classification, axis=1)
+    client_name = shp_producer or (str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente")
+    farm_name = shp_farm or (str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda")
+    result["client"] = client_name
+    result["farm"] = farm_name
+    evidence = select_evidence(result)
+    attention = result[result.final_status == "atenção"].copy()
+    return {"polygons": polygons, "result": result, "evidence": evidence, "attention": attention, "client_name": client_name, "farm_name": farm_name, "area_ha": sum(p.area_ha for p in polygons), "elements": elements, "radius_m": radius_m}
+
+
 def build_persisted_analysis(payload: dict[str, object]) -> dict[str, object]:
     raw_result = pd.DataFrame(payload.get("result_rows", []))
     result = normalise_result_frame(raw_result, float(payload.get("radius_m") or MAX_DISTANCE_M))
@@ -982,6 +1042,39 @@ def upsert_session_analysis(record: dict[str, object]) -> bool:
             return True
     st.session_state.analyses.append(record)
     return False
+
+
+def rehydrate_persisted_analysis(payload: dict[str, object]) -> dict[str, object]:
+    """Recupera fontes antigas do Drive e preenche seus pontos/resultados."""
+    if payload.get("result_rows"):
+        return build_persisted_analysis(payload)
+    record = build_persisted_analysis(payload)
+    if not cloud_storage_configured() or not payload.get("analysis_id"):
+        return record
+    source = download_persisted_source(str(payload["analysis_id"]))
+    processed = process_source_bytes(source["excel_original"], source["shp"], float(payload.get("radius_m") or MAX_DISTANCE_M))
+    reanalysis = export_individual(source["excel_original"], processed["evidence"], processed["radius_m"])
+    metadata = persist_analysis(
+        client_name=processed["client_name"], farm_name=processed["farm_name"], year=int(CURRENT_YEAR),
+        radius_m=processed["radius_m"], original=source["excel_original"], shp_bytes=source["shp"],
+        reanalysis=reanalysis, original_name=source.get("excel_original_name") or payload.get("name") or "analise.xlsx",
+        shp_name=source.get("shp_name") or payload.get("shp_name") or "limite.shp", area_ha=processed["area_ha"],
+        point_count=len(processed["result"]), outlier_count=len(processed["evidence"]),
+        attention_count=len(processed["attention"]), result=processed["result"], lof_min_neighbors=MIN_LOF_NEIGHBORS,
+    ) or {}
+    name = str(source.get("excel_original_name") or payload.get("name") or "analise.xlsx")
+    shp_name = str(source.get("shp_name") or payload.get("shp_name") or "limite.shp")
+    return {
+        "analysis_id": metadata.get("analysis_id") or payload.get("analysis_id"),
+        "source_hash": metadata.get("source_hash") or payload.get("source_hash") or sha256(source["excel_original"] + source["shp"]),
+        "analysis_key": analysis_identity_key(processed["client_name"], processed["farm_name"], name, shp_name),
+        "name": name, "shp_name": shp_name, "client_name": processed["client_name"], "farm_name": processed["farm_name"],
+        "original": source["excel_original"], "shp_bytes": source["shp"], "radius_m": processed["radius_m"],
+        "result": processed["result"], "evidence": processed["evidence"], "attention": processed["attention"],
+        "polygons": processed["polygons"], "area_ha": processed["area_ha"], "elements": processed["elements"],
+        "file_urls": metadata.get("file_urls") or payload.get("file_urls", {}),
+        "updated_at": metadata.get("updated_at") or payload.get("updated_at"), "point_count": len(processed["result"]), "persisted": True,
+    }
 
 
 def render_scatter(result: pd.DataFrame) -> None:
@@ -1103,14 +1196,26 @@ def main():
     if "analyses" not in st.session_state: st.session_state.analyses = []
     if "persisted_analyses_loaded" not in st.session_state:
         st.session_state.persisted_analyses_loaded = False
+    if "persisted_rehydration_errors" not in st.session_state:
+        st.session_state.persisted_rehydration_errors = []
     if not st.session_state.persisted_analyses_loaded:
         if database_configured():
             try:
-                persisted = [build_persisted_analysis(payload) for payload in load_persisted_analyses(int(CURRENT_YEAR))]
+                persisted = []
+                for payload in load_persisted_analyses(int(CURRENT_YEAR)):
+                    try:
+                        persisted.append(rehydrate_persisted_analysis(payload))
+                    except Exception as rehydrate_exc:
+                        persisted.append(build_persisted_analysis(payload))
+                        st.session_state.persisted_rehydration_errors.append(
+                            f"{payload.get('client_name') or 'análise'}: {rehydrate_exc}"
+                        )
                 st.session_state.analyses = persisted
             except Exception as storage_exc:
                 st.warning(f"Não foi possível carregar as análises persistidas: {storage_exc}")
         st.session_state.persisted_analyses_loaded = True
+    if st.session_state.persisted_rehydration_errors:
+        st.info("Algumas análises antigas permaneceram como resumo porque os arquivos originais não puderam ser recuperados do Google Drive nesta sessão.")
     # O Streamlit reexecuta o script ao trocar a navegação. Mantemos um
     # snapshot explícito da visão para que essa reexecução não apague os dados
     # exibidos; ele só é substituído quando uma nova análise é processada.

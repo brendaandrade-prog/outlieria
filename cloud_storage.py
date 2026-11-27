@@ -138,6 +138,26 @@ def update_bytes(service, file_id: str, data: bytes, mime_type: str) -> tuple[st
     return file["id"], file.get("webViewLink", f"https://drive.google.com/open?id={file['id']}")
 
 
+def download_persisted_source(analysis_id: str) -> dict[str, Any]:
+    """Baixa Excel e SHP/ZIP originais vinculados a uma análise persistida."""
+    if not configured():
+        raise RuntimeError("Google Drive não está configurado para recuperar os arquivos originais.")
+    files = _analysis_files(str(analysis_id))
+    service = drive_service()
+    downloaded: dict[str, Any] = {"analysis_id": str(analysis_id), "file_urls": {}}
+    for row in files:
+        kind = str(row.get("file_kind") or "")
+        file_id = row.get("drive_file_id")
+        if kind not in {"excel_original", "shp"} or not file_id:
+            continue
+        downloaded[kind] = service.files().get(fileId=file_id, alt="media").execute()
+        downloaded["file_urls"][kind] = row.get("drive_web_url") or ""
+        downloaded[f"{kind}_name"] = row.get("file_name") or ""
+    if not downloaded.get("excel_original") or not downloaded.get("shp"):
+        raise RuntimeError("A análise não possui Excel e SHP/ZIP originais disponíveis no Google Drive.")
+    return downloaded
+
+
 def supabase_request(path: str, method: str = "GET", payload: Any = None, params: dict[str, str] | None = None) -> Any:
     base = setting("SUPABASE_URL").rstrip("/")
     headers = {

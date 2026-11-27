@@ -13,6 +13,37 @@ import cloud_storage
 
 
 class OutlieriaSpatialTests(unittest.TestCase):
+    def test_download_persisted_source_uses_drive_file_ids(self):
+        class FakeRequest:
+            def __init__(self, value):
+                self.value = value
+
+            def execute(self):
+                return self.value
+
+        class FakeFiles:
+            def get(self, fileId, alt):
+                return FakeRequest({"excel-id": b"excel-bytes", "shp-id": b"shp-bytes"}[fileId])
+
+        class FakeService:
+            files = lambda self: FakeFiles()
+
+        rows = [
+            {"file_kind": "excel_original", "drive_file_id": "excel-id", "file_name": "dados.xlsx", "drive_web_url": "excel-url"},
+            {"file_kind": "shp", "drive_file_id": "shp-id", "file_name": "limite.zip", "drive_web_url": "shp-url"},
+        ]
+        with patch.object(cloud_storage, "configured", return_value=True), patch.object(cloud_storage, "_analysis_files", return_value=rows), patch.object(cloud_storage, "drive_service", return_value=FakeService()):
+            source = cloud_storage.download_persisted_source("analysis-1")
+        self.assertEqual(source["excel_original"], b"excel-bytes")
+        self.assertEqual(source["shp"], b"shp-bytes")
+        self.assertEqual(source["excel_original_name"], "dados.xlsx")
+        self.assertEqual(source["shp_name"], "limite.zip")
+
+    def test_download_persisted_source_fails_without_drive(self):
+        with patch.object(cloud_storage, "configured", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "Google Drive"):
+                cloud_storage.download_persisted_source("analysis-1")
+
     def test_radius_validation(self):
         self.assertEqual(app.validate_radius(125), 125.0)
         with self.assertRaises(ValueError):
