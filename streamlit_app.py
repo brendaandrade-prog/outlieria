@@ -1121,7 +1121,7 @@ def process_uploaded_source_job(original_bytes: bytes, shp_bytes: bytes, radius_
     return record, message
 
 
-def render_scatter(result: pd.DataFrame) -> None:
+def render_scatter(result: pd.DataFrame, y_domain: tuple[float, float] | None = None) -> None:
     """Renderiza dispersão em SVG, sem Altair, Plotly ou dependências de gráfico."""
     visible_statuses = {"atenção", "outlier confirmado", "outlier estatístico", "anomalia temporal", "anomalia espacial", "outlier"}
     points = result[result.get("final_status", pd.Series(index=result.index, dtype=object)).isin(visible_statuses)].dropna(subset=["source_row", "value"]).copy()
@@ -1129,7 +1129,7 @@ def render_scatter(result: pd.DataFrame) -> None:
         return
     width, height = 1100, 280
     # Reserva uma coluna própria para a legenda, sem sobreposição com o gráfico.
-    left, right, top, bottom = 145, 16, 18, 38
+    left, right, top, bottom = 145, 16, 18, 72
     # O eixo X é organizado em blocos por lavoura, preservando a ordem em que
     # as lavouras aparecem na planilha e delimitando visualmente cada região.
     if "crop" in points.columns:
@@ -1152,12 +1152,13 @@ def render_scatter(result: pd.DataFrame) -> None:
         cursor += 1  # espaço visual entre lavouras
     points = pd.concat(ordered_parts, ignore_index=True) if ordered_parts else points.reset_index(drop=True)
     many_crops = len(crop_regions) > 6
-    height = 320 if many_crops else 280
+    height = 360 if many_crops else 280
     x_values = np.array([index + sum(1 for _, start, end in crop_regions if end < index) for index in range(len(points))], dtype=float)
     y_values = pd.to_numeric(points["value"], errors="coerce").to_numpy(dtype=float)
     raw_x_min, raw_x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
-    raw_y_min, raw_y_max = float(np.nanmin(y_values)), float(np.nanmax(y_values))
-    axis_steps = [0.5, 1, 3, 5, 10, 25]
+    raw_y_min, raw_y_max = y_domain if y_domain else (float(np.nanmin(y_values)), float(np.nanmax(y_values)))
+    # Escalas legíveis e consistentes: 5, 10, 50, 100, 500...
+    axis_steps = [5 * (10 ** exponent) for exponent in range(-2, 6)]
     def rounded_axis(raw_min, raw_max):
         span = max(raw_max - raw_min, 0.5)
         step = min(axis_steps, key=lambda candidate: abs(candidate - span / 4))
@@ -1203,7 +1204,7 @@ def render_scatter(result: pd.DataFrame) -> None:
             grid_parts.append(f'<line x1="{separator_x:.1f}" x2="{separator_x:.1f}" y1="{top}" y2="{height-bottom}" stroke="#cbd4c4" stroke-width="1.2" stroke-dasharray="3 3"/>')
         center_x = sx((start_x + end_x) / 2)
         label = html.escape(crop_name)
-        label_y = height - bottom + (38 if many_crops else 17)
+        label_y = height - bottom + (50 if many_crops else 17)
         if many_crops:
             grid_parts.append(f'<text x="{center_x:.1f}" y="{label_y}" text-anchor="end" transform="rotate(-45 {center_x:.1f} {label_y})" font-family="IBM Plex Mono, monospace" font-size="9" font-weight="600" fill="#6f7c76">{label}</text>')
         else:
@@ -1211,7 +1212,7 @@ def render_scatter(result: pd.DataFrame) -> None:
     grid = "".join(region_backgrounds) + "".join(grid_parts)
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="9"><circle cx="13" cy="92" r="4" fill="#b79b43"/><text x="23" y="95" fill="#6f7c76">atenção</text><circle cx="13" cy="112" r="4" fill="#d8793e"/><text x="23" y="115" fill="#6f7c76">outlier 2026</text><circle cx="13" cy="132" r="4" fill="#7656a8"/><text x="23" y="135" fill="#6f7c76">anomalia</text></g>'
     hover_rules = "".join(f".outlieria-svg:has(.point-{index}:hover) .tooltip-{index}{{opacity:1}}" for index in range(len(circles)))
-    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-svg" viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}<g class="outlieria-tooltips">{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Gráfico de dispersão"><style>.point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}<g class="outlieria-tooltips">{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
 
 
 def format_source_timestamp(value: object) -> str:
@@ -1513,7 +1514,9 @@ def main():
             if selected_chart_crop != "Todas":
                 chart = chart[chart.crop.astype(str) == str(selected_chart_crop)].copy()
             if not chart.empty:
-                render_scatter(chart)
+                element_values = pd.to_numeric(result.loc[result.element == element, "value"], errors="coerce").dropna()
+                y_domain = (float(element_values.min()), float(element_values.max())) if not element_values.empty else None
+                render_scatter(chart, y_domain=y_domain)
         with c2:
             analysis_radius = float(current.get("radius_m", active_radius))
             st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
