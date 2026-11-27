@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import shapefile
 import streamlit as st
+import streamlit.components.v1 as components
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
@@ -1339,7 +1340,33 @@ def render_spatial_map(result: pd.DataFrame, polygons: list[PolygonRecord] | Non
         tooltips.append(f'<g class="spatial-tooltip spatial-tooltip-{point_index}"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="158" height="62" rx="5" fill="#ffffff" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">CAMPO: {crop_name}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 40:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {float(row["value"]):.2f}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 53:.1f}" font-family="IBM Plex Mono, monospace" font-size="8" fill="#7656a8">{html.escape(status)}</text></g>')
     hover_rules = "".join(f'.outlieria-spatial-svg:has(.spatial-point-{index}:hover) .spatial-tooltip-{index}{{opacity:1}}' for index in range(len(circles)))
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="9"><circle cx="13" cy="28" r="4" fill="#b79b43"/><text x="23" y="31" fill="#6f7c76">atenção</text><circle cx="13" cy="48" r="4" fill="#d8793e"/><text x="23" y="51" fill="#6f7c76">outlier 2026</text><circle cx="13" cy="68" r="4" fill="#7656a8"/><text x="23" y="71" fill="#6f7c76">anomalia</text></g>'
-    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-spatial-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Mapa espacial dos pontos" style="overflow:hidden"><style>.spatial-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{"".join(grid_parts)}{boundaries}{"".join(circles)}<g>{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
+    spatial_html = f'''<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px;overflow:hidden">
+<svg id="outlieria-spatial-map" class="outlieria-spatial-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Mapa espacial dos pontos" style="overflow:hidden;cursor:zoom-in">
+<style>.spatial-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>
+<g id="spatial-map-content">{"".join(grid_parts)}{boundaries}{"".join(circles)}<g>{"".join(tooltips)}</g></g>{legend}
+</svg></div>
+<script>
+(() => {{
+  const svg = document.getElementById('outlieria-spatial-map');
+  const content = document.getElementById('spatial-map-content');
+  let zoom = 1, tx = 0, ty = 0;
+  const viewWidth = {width}, viewHeight = {height};
+  svg.addEventListener('wheel', (event) => {{
+    event.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * viewWidth / rect.width;
+    const y = (event.clientY - rect.top) * viewHeight / rect.height;
+    const nextZoom = Math.max(1, Math.min(8, zoom * (event.deltaY < 0 ? 1.2 : 1 / 1.2)));
+    const ratio = nextZoom / zoom;
+    tx = x - (x - tx) * ratio;
+    ty = y - (y - ty) * ratio;
+    zoom = nextZoom;
+    content.setAttribute('transform', `translate(${{tx}} ${{ty}}) scale(${{zoom}})`);
+    svg.style.cursor = zoom > 1 ? 'zoom-out' : 'zoom-in';
+  }}, {{ passive: false }});
+}})();
+</script>'''
+    components.html(spatial_html, height=height + 18, scrolling=False)
 
 
 def format_source_timestamp(value: object) -> str:
@@ -1627,7 +1654,6 @@ def main():
         points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); crops = result.crop.nunique()
         selected_polygons = []
         for analysis in st.session_state.analyses:
-            analysis_result = analysis.get("result")
             if str(analysis.get("client_name", "")) == selected_client and str(analysis.get("farm_name", "")) == selected_farm:
                 selected_polygons.extend(analysis.get("polygons") or [])
         st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>Qualquer diferença temporal espacial detectada gera outlier; o LOF também pode gerar o sinal.</p></div></div></div>", unsafe_allow_html=True)
@@ -1649,25 +1675,8 @@ def main():
                 element_values = pd.to_numeric(result.loc[result.element == element, "value"], errors="coerce").dropna()
                 y_domain = (float(element_values.min()), float(element_values.max())) if not element_values.empty else None
                 render_scatter(chart, y_domain=y_domain)
-                st.markdown("<div class='section-kicker' style='margin-top:18px'>02 / posição espacial</div><h3 style='margin-top:4px'>Onde estão os pontos selecionados</h3><p class='lead' style='font-size:12px'>Posição relativa em metros, preservando a proximidade geográfica entre longitude e latitude. A escala é igual nos dois eixos.</p>", unsafe_allow_html=True)
-                if "spatial_zoom" not in st.session_state:
-                    st.session_state.spatial_zoom = 1.0
-                zoom_in, zoom_out, zoom_reset, zoom_label = st.columns([0.7, 0.7, 0.9, 3.2])
-                with zoom_in:
-                    if st.button("＋", key="spatial_zoom_in", help="Aproximar o mapa"):
-                        st.session_state.spatial_zoom = min(8.0, round(st.session_state.spatial_zoom * 1.5, 2))
-                        st.rerun()
-                with zoom_out:
-                    if st.button("−", key="spatial_zoom_out", help="Afastar o mapa"):
-                        st.session_state.spatial_zoom = max(1.0, round(st.session_state.spatial_zoom / 1.5, 2))
-                        st.rerun()
-                with zoom_reset:
-                    if st.button("↺  Resetar", key="spatial_zoom_reset"):
-                        st.session_state.spatial_zoom = 1.0
-                        st.rerun()
-                with zoom_label:
-                    st.caption(f"Zoom {st.session_state.spatial_zoom:g}× · limite do SHP em segundo plano")
-                render_spatial_map(chart, polygons=selected_polygons, zoom=st.session_state.spatial_zoom)
+                st.markdown("<div class='section-kicker' style='margin-top:18px'>02 / posição espacial</div><h3 style='margin-top:4px'>Onde estão os pontos selecionados</h3><p class='lead' style='font-size:12px'>Role a roda do mouse sobre o mapa para aproximar ou afastar. A posição relativa é apresentada em metros e o limite do SHP aparece ao fundo.</p>", unsafe_allow_html=True)
+                render_spatial_map(chart, polygons=selected_polygons)
         with c2:
             analysis_radius = float(current.get("radius_m", active_radius))
             st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
