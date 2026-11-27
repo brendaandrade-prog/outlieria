@@ -94,6 +94,7 @@ class PolygonRecord:
     area_ha: float
     producer_name: str = ""
     farm_name: str = ""
+    field_name: str = ""
 
 
 @dataclass
@@ -181,6 +182,7 @@ def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
     field_keys = {normalise_header_key(name): name for name in field_names}
     producer_field = next((field_keys[key] for key in ("PRODUTOR", "PRODUCER") if key in field_keys), None)
     farm_field = next((field_keys[key] for key in ("FAZENDA", "FARM", "PROPERTY") if key in field_keys), None)
+    field_field = next((field_keys[key] for key in ("CAMPO", "FIELD", "LAVOURA") if key in field_keys), None)
     records = []
     for index, shp in enumerate(shapes):
         geometry = shapely_shape(shp.__geo_interface__)
@@ -188,7 +190,8 @@ def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
         attribute_map = dict(zip(field_names, attributes))
         producer = str(attribute_map.get(producer_field) or "").strip() if producer_field else ""
         farm = str(attribute_map.get(farm_field) or "").strip() if farm_field else ""
-        records.append(PolygonRecord(geometry, polygon_area_ha(geometry), producer, farm))
+        field = str(attribute_map.get(field_field) or "").strip() if field_field else ""
+        records.append(PolygonRecord(geometry, polygon_area_ha(geometry), producer, farm, field))
     if archive:
         archive.close()
     return records
@@ -985,6 +988,9 @@ def process_source_bytes(original_bytes: bytes, shp_bytes: bytes, radius_m: floa
     farm_name = shp_farm or (str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda")
     result["client"] = client_name
     result["farm"] = farm_name
+    shp_fields = {index: polygon.field_name.strip() for index, polygon in enumerate(polygons) if polygon.field_name.strip()}
+    if shp_fields and "polygon_index" in result.columns:
+        result["crop"] = result["polygon_index"].map(shp_fields).fillna(result["crop"])
     evidence = select_evidence(result)
     attention = result[result.final_status == "atenção"].copy()
     return {"polygons": polygons, "result": result, "evidence": evidence, "attention": attention, "client_name": client_name, "farm_name": farm_name, "area_ha": sum(p.area_ha for p in polygons), "elements": elements, "radius_m": radius_m}
