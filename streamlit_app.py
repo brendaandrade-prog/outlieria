@@ -1227,10 +1227,10 @@ def main():
     with st.sidebar:
         st.markdown("<div class='brand'><span class='brand-mark'></span><span>outlieria</span></div>", unsafe_allow_html=True)
         st.markdown("<div class='rail-caption'>análise agrícola</div>", unsafe_allow_html=True)
-        page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
         st.markdown(f"<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · {active_radius:g} m</span></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>{page.upper()}</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
-    if page == "Fontes":
+    st.markdown("<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>PAINEL 2026</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
+    vision_tab, sources_tab = st.tabs(["Visão 2026", "Fontes"])
+    with sources_tab:
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1.25, 1.25, 1.25])
         with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
@@ -1417,109 +1417,109 @@ def main():
                             except Exception as deletion_exc:
                                 st.error(f"Não foi possível excluir a análise: {deletion_exc}")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
-        return
-    if not st.session_state.analyses:
+    with vision_tab:
+        if not st.session_state.analyses:
+            st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
+            st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
+            return
+        current = st.session_state.analyses[-1]
+        snapshot = st.session_state.get("vision_2026_result")
+        if snapshot is None or snapshot.empty or not {"element", "depth", "value", "client", "farm"}.issubset(snapshot.columns):
+            st.info("As fontes persistidas foram carregadas, mas ainda não possuem resultados detalhados suficientes para a Visão 2026. Reenvie a planilha e o SHP para atualizar essa fonte.")
+            return
+        result = snapshot.copy()
+        result = result[~result.element.map(is_ignored_element)].copy()
+        if "ml_status" not in result.columns:
+            result["ml_status"] = "dados insuficientes"
+        if "ml_score" not in result.columns:
+            result["ml_score"] = np.nan
+        if "ml_neighbor_count" not in result.columns:
+            result["ml_neighbor_count"] = np.nan
+        if "ml_k_effective" not in result.columns:
+            result["ml_k_effective"] = np.nan
+        if "ml_radius_m" not in result.columns:
+            result["ml_radius_m"] = result.get("radius_m", active_radius)
+        if "ml_rule" not in result.columns:
+            result["ml_rule"] = "LOF não disponível nesta sessão antiga"
+        if "final_status" not in result.columns:
+            result["final_status"] = result.apply(combine_detection, axis=1)
+        result = apply_ph_smp_validation(result)
+        result["display_status"] = result.apply(display_classification, axis=1)
+        element_order = []
+        for analysis in st.session_state.analyses:
+            source_elements = analysis.get("elements", ordered_unique(analysis["result"].element))
+            for element_name in source_elements:
+                if not is_ignored_element(element_name) and str(element_name) not in element_order:
+                    element_order.append(str(element_name))
         st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
-        st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
-        return
-    current = st.session_state.analyses[-1]
-    snapshot = st.session_state.get("vision_2026_result")
-    if snapshot is None or snapshot.empty or not {"element", "depth", "value", "client", "farm"}.issubset(snapshot.columns):
-        st.info("As fontes persistidas foram carregadas, mas ainda não possuem resultados detalhados suficientes para a Visão 2026. Reenvie a planilha e o SHP para atualizar essa fonte.")
-        return
-    result = snapshot.copy()
-    result = result[~result.element.map(is_ignored_element)].copy()
-    if "ml_status" not in result.columns:
-        result["ml_status"] = "dados insuficientes"
-    if "ml_score" not in result.columns:
-        result["ml_score"] = np.nan
-    if "ml_neighbor_count" not in result.columns:
-        result["ml_neighbor_count"] = np.nan
-    if "ml_k_effective" not in result.columns:
-        result["ml_k_effective"] = np.nan
-    if "ml_radius_m" not in result.columns:
-        result["ml_radius_m"] = result.get("radius_m", active_radius)
-    if "ml_rule" not in result.columns:
-        result["ml_rule"] = "LOF não disponível nesta sessão antiga"
-    if "final_status" not in result.columns:
-        result["final_status"] = result.apply(combine_detection, axis=1)
-    result = apply_ph_smp_validation(result)
-    result["display_status"] = result.apply(display_classification, axis=1)
-    element_order = []
-    for analysis in st.session_state.analyses:
-        source_elements = analysis.get("elements", ordered_unique(analysis["result"].element))
-        for element_name in source_elements:
-            if not is_ignored_element(element_name) and str(element_name) not in element_order:
-                element_order.append(str(element_name))
-    st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
-    filter_col1, filter_col2 = st.columns(2)
-    client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
-    saved_client = str(st.session_state.get("vision_client_filter", "Todos"))
-    if saved_client not in client_options:
-        saved_client = "Todos"
-        st.session_state.vision_client_filter = saved_client
-        st.session_state.pop("vision_client_widget", None)
-    client_index = client_options.index(saved_client)
-    with filter_col1:
-        selected_client = st.selectbox("Cliente", client_options, index=client_index, key="vision_client_widget")
-    client_changed = selected_client != saved_client
-    st.session_state.vision_client_filter = selected_client
-    if client_changed:
-        st.session_state.vision_farm_filter = ""
-        st.session_state.pop("vision_farm_widget", None)
-    farm_source = result[result.client.astype(str) == selected_client] if selected_client != "Todos" else result.iloc[0:0]
-    farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Selecione uma fazenda"] + ordered_unique(farm_source.farm)
-    saved_farm = str(st.session_state.get("vision_farm_filter", ""))
-    if saved_farm not in farm_options:
-        saved_farm = farm_options[0]
-        st.session_state.vision_farm_filter = saved_farm
-        st.session_state.pop("vision_farm_widget", None)
-    farm_index = farm_options.index(saved_farm)
-    with filter_col2:
-        selected_farm = st.selectbox("Fazenda", farm_options, index=farm_index, key="vision_farm_widget", disabled=selected_client == "Todos")
-    st.session_state.vision_farm_filter = selected_farm
-    if selected_client == "Todos" or selected_farm in {"Selecione um cliente", "Selecione uma fazenda"}:
-        st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
-        return
-    result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
-    detailed_result = result[result["element"].astype(str).str.strip().ne("") & result["value"].notna()]
-    if detailed_result.empty:
-        st.info("Cliente e fazenda carregados do banco. Esta fonte possui apenas o resumo da análise; não há resultados detalhados por ponto persistidos para exibir.")
-        return
-    result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia temporal":"anomalia temporal", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
-    points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); crops = result.crop.nunique()
-    st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>Qualquer diferença temporal espacial detectada gera outlier; o LOF também pode gerar o sinal.</p></div></div></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('regra', 'LOF + regressão', 'confirmação simultânea', 'sand')}{html_stat('outliers confirmados', outliers, 'únicos exibidos', 'orange')}</div>", unsafe_allow_html=True)
-    c1, c2 = st.columns([3,1])
-    with c1:
-        st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
-        element_options = element_order or ["Sem dados"]
-        depth_options = ordered_unique(result.depth) or ["Sem dados"]
-        element = st.selectbox("Elemento", element_options, format_func=element_label, label_visibility="collapsed")
-        depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
-        chart = result[(result.element == element) & (result.depth == depth)].copy()
-        if not chart.empty:
-            render_scatter(chart)
-    with c2:
-        analysis_radius = float(current.get("radius_m", active_radius))
-        st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
-    # Além dos outliers confirmados, a validação química pH/SMP precisa ser
-    # exibida mesmo quando LOF e regressão não confirmam o ponto.
-    table = select_evidence(result)
-    # Estado visual original da tabela nativa; os três selects permanecem como filtros.
-    header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
-    with header_filters[1]:
-        selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
-    with header_filters[2]:
-        selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
-    with header_filters[3]:
-            selected_element = st.selectbox("Elemento", ["Todos"] + element_order, key="table_filter_element", format_func=lambda value: "Todos" if value == "Todos" else element_label(value), label_visibility="collapsed")
-    if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
-    if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
-    if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
-    st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
+        filter_col1, filter_col2 = st.columns(2)
+        client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
+        saved_client = str(st.session_state.get("vision_client_filter", "Todos"))
+        if saved_client not in client_options:
+            saved_client = "Todos"
+            st.session_state.vision_client_filter = saved_client
+            st.session_state.pop("vision_client_widget", None)
+        client_index = client_options.index(saved_client)
+        with filter_col1:
+            selected_client = st.selectbox("Cliente", client_options, index=client_index, key="vision_client_widget")
+        client_changed = selected_client != saved_client
+        st.session_state.vision_client_filter = selected_client
+        if client_changed:
+            st.session_state.vision_farm_filter = ""
+            st.session_state.pop("vision_farm_widget", None)
+        farm_source = result[result.client.astype(str) == selected_client] if selected_client != "Todos" else result.iloc[0:0]
+        farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Selecione uma fazenda"] + ordered_unique(farm_source.farm)
+        saved_farm = str(st.session_state.get("vision_farm_filter", ""))
+        if saved_farm not in farm_options:
+            saved_farm = farm_options[0]
+            st.session_state.vision_farm_filter = saved_farm
+            st.session_state.pop("vision_farm_widget", None)
+        farm_index = farm_options.index(saved_farm)
+        with filter_col2:
+            selected_farm = st.selectbox("Fazenda", farm_options, index=farm_index, key="vision_farm_widget", disabled=selected_client == "Todos")
+        st.session_state.vision_farm_filter = selected_farm
+        if selected_client == "Todos" or selected_farm in {"Selecione um cliente", "Selecione uma fazenda"}:
+            st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
+            return
+        result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
+        detailed_result = result[result["element"].astype(str).str.strip().ne("") & result["value"].notna()]
+        if detailed_result.empty:
+            st.info("Cliente e fazenda carregados do banco. Esta fonte possui apenas o resumo da análise; não há resultados detalhados por ponto persistidos para exibir.")
+            return
+        result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia temporal":"anomalia temporal", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
+        points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); crops = result.crop.nunique()
+        st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>Qualquer diferença temporal espacial detectada gera outlier; o LOF também pode gerar o sinal.</p></div></div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='stats'>{html_stat('pontos 2026', points, 'pontos com coordenadas', 'blue')}{html_stat('lavouras', crops, 'nomes relacionados ao limite', 'lime')}{html_stat('regra', 'LOF + regressão', 'confirmação simultânea', 'sand')}{html_stat('outliers confirmados', outliers, 'únicos exibidos', 'orange')}</div>", unsafe_allow_html=True)
+        c1, c2 = st.columns([3,1])
+        with c1:
+            st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
+            element_options = element_order or ["Sem dados"]
+            depth_options = ordered_unique(result.depth) or ["Sem dados"]
+            element = st.selectbox("Elemento", element_options, format_func=element_label, label_visibility="collapsed")
+            depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
+            chart = result[(result.element == element) & (result.depth == depth)].copy()
+            if not chart.empty:
+                render_scatter(chart)
+        with c2:
+            analysis_radius = float(current.get("radius_m", active_radius))
+            st.markdown(f"<div class='source-card'><div class='section-kicker'>regra aplicada</div><h3>Último ano,<br><em>sem misturar.</em></h3><p>LOF e regressão usam a coordenada, separadamente por lavoura, elemento e profundidade. Os ciclos são relacionados espacialmente, nunca pelo ID. O LOF exige pelo menos {MIN_LOF_NEIGHBORS} vizinhos e a regressão {MIN_REGRESSION_CYCLES} ciclos.</p><hr><b>{analysis_radius:g} m</b><br><span class='mono'>raio espacial ativo · coordenada como referência</span></div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-head'><div><div class='section-kicker'>02 / inspeção</div><h2>Pontos da planilha 2026</h2></div></div>", unsafe_allow_html=True)
+        # Além dos outliers confirmados, a validação química pH/SMP precisa ser
+        # exibida mesmo quando LOF e regressão não confirmam o ponto.
+        table = select_evidence(result)
+        # Estado visual original da tabela nativa; os três selects permanecem como filtros.
+        header_filters = st.columns([1.2, 1.35, 1.2, 1.2, 1.0, 0.9])
+        with header_filters[1]:
+            selected_crop = st.selectbox("Lavoura", ["Todas"] + sorted(table.crop.dropna().astype(str).unique().tolist()), key="table_filter_crop", label_visibility="collapsed")
+        with header_filters[2]:
+            selected_depth = st.selectbox("Profundidade", ["Todas"] + sorted(table.depth.dropna().astype(str).unique().tolist()), key="table_filter_depth", label_visibility="collapsed")
+        with header_filters[3]:
+                selected_element = st.selectbox("Elemento", ["Todos"] + element_order, key="table_filter_element", format_func=lambda value: "Todos" if value == "Todos" else element_label(value), label_visibility="collapsed")
+        if selected_crop != "Todas": table = table[table.crop.astype(str) == selected_crop]
+        if selected_depth != "Todas": table = table[table.depth.astype(str) == selected_depth]
+        if selected_element != "Todos": table = table[table.element.astype(str) == selected_element]
+        st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
 
 
-if __name__ == "__main__":
-    main()
+    if __name__ == "__main__":
+        main()
