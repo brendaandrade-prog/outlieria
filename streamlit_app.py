@@ -1119,7 +1119,8 @@ def process_uploaded_source_job(original_bytes: bytes, shp_bytes: bytes, radius_
 
 def render_scatter(result: pd.DataFrame) -> None:
     """Renderiza dispersão em SVG, sem Altair, Plotly ou dependências de gráfico."""
-    points = result.dropna(subset=["source_row", "value"]).copy()
+    visible_statuses = {"atenção", "outlier confirmado", "outlier estatístico", "anomalia temporal", "anomalia espacial", "outlier"}
+    points = result[result.get("final_status", pd.Series(index=result.index, dtype=object)).isin(visible_statuses)].dropna(subset=["source_row", "value"]).copy()
     if points.empty:
         return
     width, height = 820, 280
