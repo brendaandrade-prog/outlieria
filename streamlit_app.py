@@ -1151,6 +1151,8 @@ def render_scatter(result: pd.DataFrame) -> None:
         ordered_parts.append(crop_points)
         cursor += 1  # espaço visual entre lavouras
     points = pd.concat(ordered_parts, ignore_index=True) if ordered_parts else points.reset_index(drop=True)
+    many_crops = len(crop_regions) > 6
+    height = 320 if many_crops else 280
     x_values = np.array([index + sum(1 for _, start, end in crop_regions if end < index) for index in range(len(points))], dtype=float)
     y_values = pd.to_numeric(points["value"], errors="coerce").to_numpy(dtype=float)
     raw_x_min, raw_x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
@@ -1190,15 +1192,23 @@ def render_scatter(result: pd.DataFrame) -> None:
         fraction = (y_max - y_tick) / (y_max - y_min)
         gy = top + fraction * (height - top - bottom)
         grid_parts.append(f'<line x1="{left}" x2="{width-right}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#e5e8df" stroke-width="1"/><text x="{left - 7}" y="{gy + 3:.1f}" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{tick_text(y_tick, y_step)}</text>')
+    region_backgrounds = []
     for region_index, (crop_name, start_x, end_x) in enumerate(crop_regions):
         region_left = start_x - 0.5
         region_right = end_x + 0.5
+        if region_index % 2 == 0:
+            region_backgrounds.append(f'<rect x="{sx(region_left):.1f}" y="{top}" width="{max(sx(region_right) - sx(region_left), 1):.1f}" height="{height-bottom-top}" fill="#f1f5e8" fill-opacity="0.58"/>')
         if region_index:
             separator_x = sx(region_left)
             grid_parts.append(f'<line x1="{separator_x:.1f}" x2="{separator_x:.1f}" y1="{top}" y2="{height-bottom}" stroke="#cbd4c4" stroke-width="1.2" stroke-dasharray="3 3"/>')
         center_x = sx((start_x + end_x) / 2)
-        grid_parts.append(f'<text x="{center_x:.1f}" y="{height - bottom + 17}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" font-weight="600" fill="#6f7c76">{html.escape(crop_name)}</text>')
-    grid = "".join(grid_parts)
+        label = html.escape(crop_name)
+        label_y = height - bottom + (38 if many_crops else 17)
+        if many_crops:
+            grid_parts.append(f'<text x="{center_x:.1f}" y="{label_y}" text-anchor="end" transform="rotate(-45 {center_x:.1f} {label_y})" font-family="IBM Plex Mono, monospace" font-size="9" font-weight="600" fill="#6f7c76">{label}</text>')
+        else:
+            grid_parts.append(f'<text x="{center_x:.1f}" y="{label_y}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" font-weight="600" fill="#6f7c76">{label}</text>')
+    grid = "".join(region_backgrounds) + "".join(grid_parts)
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="9"><circle cx="13" cy="92" r="4" fill="#b79b43"/><text x="23" y="95" fill="#6f7c76">atenção</text><circle cx="13" cy="112" r="4" fill="#d8793e"/><text x="23" y="115" fill="#6f7c76">outlier 2026</text><circle cx="13" cy="132" r="4" fill="#7656a8"/><text x="23" y="135" fill="#6f7c76">anomalia</text></g>'
     hover_rules = "".join(f".outlieria-svg:has(.point-{index}:hover) .tooltip-{index}{{opacity:1}}" for index in range(len(circles)))
     st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-svg" viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}<g class="outlieria-tooltips">{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
@@ -1498,6 +1508,10 @@ def main():
             element = st.selectbox("Elemento", element_options, format_func=element_label, label_visibility="collapsed")
             depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
             chart = result[(result.element == element) & (result.depth == depth)].copy()
+            crop_options = ["Todas"] + ordered_unique(chart.get("crop", pd.Series(dtype=object)))
+            selected_chart_crop = st.selectbox("Lavoura", crop_options, key="vision_chart_crop", label_visibility="collapsed")
+            if selected_chart_crop != "Todas":
+                chart = chart[chart.crop.astype(str) == str(selected_chart_crop)].copy()
             if not chart.empty:
                 render_scatter(chart)
         with c2:
