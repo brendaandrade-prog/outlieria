@@ -23,6 +23,7 @@ from shapely.geometry import Point, shape as shapely_shape
 from cloud_storage import (
     configured as cloud_storage_configured,
     database_configured,
+    delete_analysis,
     load_persisted_analyses,
     missing_settings,
     persist_analysis,
@@ -1218,6 +1219,23 @@ def main():
                             st.link_button("↗  ABRIR REANÁLISE", analysis["file_urls"]["reanálise_2026"], use_container_width=True)
                         else:
                             st.caption("arquivo original não disponível")
+                        if st.button("Excluir", key=f"delete_{analysis_index}_{analysis.get('analysis_id') or analysis['name']}", use_container_width=True):
+                            try:
+                                deletion = None
+                                if analysis.get("analysis_id"):
+                                    if not database_configured():
+                                        raise RuntimeError("Supabase não está configurado; a análise não foi excluída do banco.")
+                                    deletion = delete_analysis(str(analysis["analysis_id"]))
+                                st.session_state.analyses.pop(analysis_index)
+                                st.session_state.vision_2026_result = build_vision_snapshot(st.session_state.analyses)
+                                st.session_state.vision_2026_revision += 1
+                                if deletion and deletion.get("drive_files_pending"):
+                                    st.warning("Análise excluída do banco e da interface. Os arquivos do Google Drive permaneceram porque o Drive não está configurado.")
+                                else:
+                                    st.success("Análise excluída da interface, do Supabase e dos arquivos vinculados no Google Drive.")
+                                st.rerun()
+                            except Exception as deletion_exc:
+                                st.error(f"Não foi possível excluir a análise: {deletion_exc}")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
         return
     if not st.session_state.analyses:

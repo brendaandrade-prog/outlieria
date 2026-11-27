@@ -483,6 +483,40 @@ def persist_analysis(
     }
 
 
+def delete_analysis(analysis_id: str) -> dict[str, Any]:
+    """Exclui arquivos da análise no Drive e o registro Supabase em cascata."""
+    if not database_configured():
+        raise RuntimeError("Supabase não está configurado; a análise não foi excluída do banco.")
+    analysis_id = str(analysis_id)
+    files = _analysis_files(analysis_id)
+    drive_deleted = 0
+    drive_errors: list[str] = []
+    if configured() and files:
+        service = drive_service()
+        for row in files:
+            file_id = row.get("drive_file_id")
+            if not file_id:
+                continue
+            try:
+                service.files().delete(fileId=file_id).execute()
+                drive_deleted += 1
+            except Exception as exc:
+                # O arquivo pode já ter sido removido manualmente no Drive.
+                detail = str(exc)
+                if "404" not in detail and "not found" not in detail.lower():
+                    drive_errors.append(f"{row.get('file_name') or file_id}: {detail}")
+        if drive_errors:
+            raise RuntimeError("Não foi possível excluir todos os arquivos do Google Drive: " + " | ".join(drive_errors))
+
+    supabase_request(f"analyses?id=eq.{analysis_id}", "DELETE")
+    return {
+        "analysis_id": analysis_id,
+        "drive_deleted": drive_deleted,
+        "drive_configured": configured(),
+        "drive_files_pending": bool(files) and not configured(),
+    }
+
+
 def _result_rows_for_analysis(analysis: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     analysis_id = str(analysis["id"])
     points = supabase_request(
