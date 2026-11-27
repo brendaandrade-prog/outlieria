@@ -1300,7 +1300,8 @@ def render_spatial_map(result: pd.DataFrame) -> None:
         grid_parts.append(f'<line x1="{gx:.1f}" x2="{gx:.1f}" y1="{offset_y:.1f}" y2="{offset_y + map_height:.1f}" stroke="#e5e8df"/>')
         grid_parts.append(f'<line x1="{offset_x:.1f}" x2="{offset_x + map_width:.1f}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#e5e8df"/>')
     grid_parts.append(f'<text x="{offset_x + map_width / 2:.1f}" y="{height - 12}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">posição leste–oeste (m)</text>')
-    grid_parts.append(f'<text x="14" y="{offset_y + map_height / 2:.1f}" text-anchor="middle" transform="rotate(-90 14 {offset_y + map_height / 2:.1f})" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">posição norte–sul (m)</text>')
+    axis_label_x = max(38.0, offset_x - 28.0)
+    grid_parts.append(f'<text x="{axis_label_x:.1f}" y="{offset_y + map_height / 2:.1f}" text-anchor="middle" transform="rotate(-90 {axis_label_x:.1f} {offset_y + map_height / 2:.1f})" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">posição norte–sul (m)</text>')
 
     circles, tooltips = [], []
     for point_index, (_, row) in enumerate(points.iterrows()):
