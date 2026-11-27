@@ -1317,6 +1317,8 @@ def main():
                 )
                 st.info("Processamento iniciado. A troca de navegação não interromperá esta análise.")
         processing_future = st.session_state.get("processing_future")
+        if processing_future and not processing_future.done() and page == "Fontes":
+            st.info("Processamento em andamento. Esta análise continua rodando mesmo ao alternar para a Visão 2026.")
         if processing_future and processing_future.done():
             try:
                 record, completion_message = processing_future.result()
