@@ -216,13 +216,14 @@ class OutlieriaSpatialTests(unittest.TestCase):
                 "client": "Cliente", "farm": "Fazenda", "year": "2026",
                 "sample_index": 1, "source_row": 2, "point_id": "P1",
                 "crop": "L01", "depth": "0-10 cm", "element": "PH",
-                "value": 6.2, "final_status": "normal",
+                "value": 6.2, "graph_crop": "L01", "final_status": "normal",
             }],
             "file_urls": {"excel_original": "https://drive.example/excel"},
         })
         self.assertEqual(record["analysis_id"], "a1")
         self.assertEqual(record["radius_m"], 450.0)
         self.assertEqual(record["result"].iloc[0]["client"], "Cliente")
+        self.assertEqual(record["result"].iloc[0]["graph_crop"], "L01")
         self.assertEqual(record["file_urls"]["excel_original"], "https://drive.example/excel")
 
     def test_analysis_identity_changes_when_source_file_changes(self):

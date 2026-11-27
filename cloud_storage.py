@@ -388,7 +388,7 @@ def _result_payload(analysis_id: str, point_id: str, row: dict[str, Any]) -> dic
         "ml_regional_median", "ml_reference_scope", "ml_historical_percentile",
         "ml_historical_distribution_shift", "ml_current_cohort_shift", "reg_status", "reg_prediction",
         "reg_residual", "reg_score", "reg_cycles", "reg_rule", "ph_smp_status", "display_status",
-        "sample_index", "final_status",
+        "sample_index", "final_status", "graph_crop",
     )
     payload = {"analysis_id": analysis_id, "point_id_ref": point_id}
     payload.update({key: _clean_value(row.get(key)) for key in keys})

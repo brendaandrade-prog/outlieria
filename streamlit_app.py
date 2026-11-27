@@ -172,7 +172,7 @@ def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
     field_names: list[str] = []
     attribute_rows: list[list[object]] = []
     try:
-        field_names = [str(field[0]) for field in reader.fields[1:]]
+        field_names = [shp_attribute_text(field[0]) for field in reader.fields[1:]]
         attribute_rows = reader.records()
     except (shapefile.ShapefileException, ValueError):
         # Um .shp isolado não possui a tabela DBF. A geometria continua útil;
@@ -252,8 +252,14 @@ def shp_attribute_text(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, bytes):
-        value = value.decode("utf-8", errors="replace")
-    text = str(value).strip()
+        # Nomes e valores DBF podem chegar como bytes quando o arquivo não
+        # informa claramente a codificação. Latin-1 preserva os bytes sem
+        # introduzir o caractere de substituição do UTF-8.
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            value = value.decode("latin-1", errors="replace")
+    text = str(value).replace("\x00", "").strip()
     return "" if text.lower() in {"", "none", "nan"} else text
 
 
@@ -1076,7 +1082,12 @@ def upsert_session_analysis(record: dict[str, object]) -> bool:
 
 def rehydrate_persisted_analysis(payload: dict[str, object]) -> dict[str, object]:
     """Recupera fontes antigas do Drive e preenche seus pontos/resultados."""
-    if payload.get("result_rows"):
+    result_rows = payload.get("result_rows") or []
+    # Resultados gravados antes da coluna graph_crop não carregam o CAMPO do
+    # SHP. Nessa situação, baixa-se a fonte original e reprocessa-se a análise
+    # para reconstruir o nome da lavoura a partir do limite correto.
+    has_graph_crop = any(str(row.get("graph_crop") or "").strip() for row in result_rows if isinstance(row, dict))
+    if result_rows and has_graph_crop:
         return build_persisted_analysis(payload)
     record = build_persisted_analysis(payload)
     if not cloud_storage_configured() or not payload.get("analysis_id"):

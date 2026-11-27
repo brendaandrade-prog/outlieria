@@ -91,6 +91,7 @@ create table if not exists public.analysis_results (
   ph_smp_status text,
   display_status text,
   sample_index integer,
+  graph_crop text,
   final_status text,
   created_at timestamptz not null default now(),
   unique (analysis_id, point_id_ref, element)
@@ -114,6 +115,7 @@ alter table public.analysis_results add column if not exists reg_rule text;
 alter table public.analysis_results add column if not exists ph_smp_status text;
 alter table public.analysis_results add column if not exists display_status text;
 alter table public.analysis_results add column if not exists sample_index integer;
+alter table public.analysis_results add column if not exists graph_crop text;
 
 create index if not exists analysis_points_analysis_idx on public.analysis_points (analysis_id);
 create index if not exists analysis_points_location_idx on public.analysis_points (municipality, state);
