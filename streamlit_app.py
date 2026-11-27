@@ -881,9 +881,21 @@ def normalise_result_frame(result: pd.DataFrame, radius_m: float = MAX_DISTANCE_
 
 
 def build_persisted_analysis(payload: dict[str, object]) -> dict[str, object]:
-    result = normalise_result_frame(pd.DataFrame(payload.get("result_rows", [])), float(payload.get("radius_m") or MAX_DISTANCE_M))
+    raw_result = pd.DataFrame(payload.get("result_rows", []))
+    result = normalise_result_frame(raw_result, float(payload.get("radius_m") or MAX_DISTANCE_M))
     client_name = str(payload.get("client_name") or (result.client.dropna().iloc[0] if not result.empty and result.client.notna().any() else "—"))
     farm_name = str(payload.get("farm_name") or (result.farm.dropna().iloc[0] if not result.empty and result.farm.notna().any() else "—"))
+    if result.empty:
+        # Resumos antigos não tinham analysis_points/analysis_results. Ainda
+        # assim, eles devem aparecer como opções de cliente e fazenda.
+        result = normalise_result_frame(pd.DataFrame([{
+            "client": client_name,
+            "farm": farm_name,
+            "year": CURRENT_YEAR,
+            "element": "",
+            "value": np.nan,
+            "persisted_summary_only": True,
+        }]), float(payload.get("radius_m") or MAX_DISTANCE_M))
     area_ha = float(payload.get("area_ha") or 0)
     polygons = [PolygonRecord(None, area_ha)] if area_ha else []
     name = str(payload.get("name") or f"{farm_name}_{CURRENT_YEAR}.xlsx")
@@ -904,7 +916,7 @@ def build_persisted_analysis(payload: dict[str, object]) -> dict[str, object]:
         "attention": result[result.final_status == "atenção"].copy() if "final_status" in result.columns else result.iloc[0:0].copy(),
         "polygons": polygons,
         "area_ha": area_ha,
-        "elements": ordered_unique(result.element) if not result.empty and "element" in result.columns else [],
+        "elements": [value for value in ordered_unique(result.element) if str(value).strip()] if not result.empty and "element" in result.columns else [],
         "file_urls": payload.get("file_urls", {}),
         "updated_at": payload.get("updated_at"),
         "point_count": payload.get("point_count", 0),
@@ -1284,6 +1296,10 @@ def main():
         st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
         return
     result = result[(result.client.astype(str) == selected_client) & (result.farm.astype(str) == selected_farm)]
+    detailed_result = result[result["element"].astype(str).str.strip().ne("") & result["value"].notna()]
+    if detailed_result.empty:
+        st.info("Cliente e fazenda carregados do banco. Esta fonte possui apenas o resumo da análise; não há resultados detalhados por ponto persistidos para exibir.")
+        return
     result = result.copy(); result["status_label"] = result.final_status.map({"outlier confirmado":"outlier confirmado", "outlier estatístico":"outlier estatístico", "anomalia temporal":"anomalia temporal", "anomalia espacial":"anomalia espacial", "atenção":"atenção", "normal":"padrão"})
     points = result[["source_row", "point_id"]].drop_duplicates().shape[0]; outliers = int((result.final_status == "outlier confirmado").sum()); crops = result.crop.nunique()
     st.markdown(f"<div class='rule-panel'><div class='rule-title'><span>Outliers confirmados do último ano</span><span class='badge'>● 2026</span></div><div class='rule-grid'><div class='rule-item'><span class='rule-num'>01</span><strong>LOF espacial</strong><p>Compara a densidade local dos vizinhos da mesma lavoura, elemento e profundidade.</p></div><div class='rule-item'><span class='rule-num'>02</span><strong>Regressão espacial</strong><p>Reconstrói a tendência da coordenada com os pontos mais próximos de cada ciclo, sem usar o ID.</p></div><div class='rule-item'><span class='rule-num'>03</span><strong>Vizinhança</strong><p>O raio informado seleciona os vizinhos e o LOF exige pelo menos 3.</p></div><div class='rule-item'><span class='rule-num'>04</span><strong>Exibição</strong><p>Qualquer diferença temporal espacial detectada gera outlier; o LOF também pode gerar o sinal.</p></div></div></div>", unsafe_allow_html=True)

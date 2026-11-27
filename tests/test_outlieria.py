@@ -184,6 +184,18 @@ class OutlieriaSpatialTests(unittest.TestCase):
         second = app.analysis_identity_key("Cliente", "Fazenda", "dados_atualizados.xlsx", "limite.shp")
         self.assertNotEqual(first, second)
 
+    def test_summary_only_persisted_analysis_is_available_for_filters(self):
+        record = app.build_persisted_analysis({
+            "analysis_id": "summary-1",
+            "client_name": "Cliente antigo",
+            "farm_name": "Fazenda antiga",
+            "result_rows": [],
+        })
+        snapshot = app.build_vision_snapshot([record])
+        self.assertEqual(snapshot.iloc[0]["client"], "Cliente antigo")
+        self.assertEqual(snapshot.iloc[0]["farm"], "Fazenda antiga")
+        self.assertTrue(pd.isna(snapshot.iloc[0]["value"]))
+
     def test_session_upsert_replaces_same_logical_source(self):
         previous = {"analysis_key": "same", "source_hash": "old", "name": "old.xlsx"}
         replacement = {"analysis_key": "same", "source_hash": "new", "name": "new.xlsx"}
