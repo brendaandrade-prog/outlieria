@@ -528,6 +528,7 @@ def persist_analysis(
         "source_hash": source_hash,
         "replaced": bool(existing),
         "file_urls": file_urls,
+        "updated_at": analysis.get("updated_at") or analysis_payload["updated_at"],
     }
 
 

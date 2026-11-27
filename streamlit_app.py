@@ -1037,6 +1037,17 @@ def render_scatter(result: pd.DataFrame) -> None:
     st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.outlieria-point .point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s}}.outlieria-point:hover .point-tooltip{{opacity:1}}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
 
 
+def format_source_timestamp(value: object) -> str:
+    """Formata timestamps do Supabase e do processamento local para a UI."""
+    if not value:
+        return datetime.now().strftime("%d/%m/%Y %H:%M")
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.strftime("%d/%m/%Y %H:%M")
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def inject_style():
     st.markdown("""
     <style>
@@ -1236,6 +1247,7 @@ def main():
                             "area_ha": area_ha,
                             "elements": elements,
                             "file_urls": persisted_metadata.get("file_urls", {}),
+                            "updated_at": persisted_metadata.get("updated_at") or datetime.now().astimezone().isoformat(),
                             "persisted": bool(persisted_metadata.get("analysis_id")),
                         }
                         upsert_session_analysis(record)
@@ -1270,7 +1282,7 @@ def main():
                     with row_farm:
                         st.caption("FAZENDA"); st.markdown(f"**{farm_name}**")
                     with row_date:
-                        st.caption("ATUALIZAÇÃO"); st.markdown(f"**{str(analysis.get('updated_at') or datetime.now().strftime('%d %b %Y'))[:10]}**")
+                        st.caption("ATUALIZADO EM"); st.markdown(f"**{format_source_timestamp(analysis.get('updated_at'))}**")
                     with row_area:
                         st.caption("ÁREA 2026"); st.markdown(f"**{area_ha:,.1f} ha**".replace(',', 'X').replace('.', ',').replace('X', '.'))
                     with row_download:
