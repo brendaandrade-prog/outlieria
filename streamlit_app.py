@@ -274,11 +274,11 @@ def parse_numeric_values(values: pd.Series) -> pd.Series:
 
 
 def numeric_element_columns(frame: pd.DataFrame) -> list[str]:
-    excluded = {"Registro", "Descrição antiga", "Fazenda", "Longitude", "Latitude", "Área/Lavoura", "Pontos", "ID", "Profundidade"}
+    excluded = {"Registro", "Descrição antiga", "Fazenda", "Longitude", "Latitude", "Área/Lavoura", "Campo", "Pontos", "ID", "Profundidade"}
     elements = []
     for index, name in enumerate(frame.columns):
         normalized_name = str(name).strip().upper()
-        if str(name).startswith("__") or index in IGNORED_EXCEL_COLUMN_INDICES or index >= IGNORED_FROM_INDEX or name in excluded or is_ignored_element(name):
+        if str(name).startswith("__") or index in IGNORED_EXCEL_COLUMN_INDICES or index >= IGNORED_FROM_INDEX or name in excluded or normalized_name in {normalise_header_key(item) for item in excluded} or is_ignored_element(name):
             continue
         numeric = pd.to_numeric(frame[name], errors="coerce")
         if numeric.notna().any():
@@ -342,7 +342,11 @@ def parse_workbook(data: bytes, polygons: list[PolygonRecord], client_override: 
                 if len(coordinate_examples) < 3:
                     coordinate_examples.append(f"{longitude:.6f}, {latitude:.6f}")
                 continue
-            crop = str(row.get("Área/Lavoura") or "Lavoura não identificada")
+            campo_column = next((column for column in row.index if normalise_header_key(column) == "CAMPO"), None)
+            area_column = next((column for column in row.index if normalise_header_key(column) in {"AREALAVOURA", "LAVOURA", "AREA"}), None)
+            crop = str(row.get(campo_column) if campo_column else row.get(area_column) if area_column else "Lavoura não identificada")
+            if not crop or crop == "nan":
+                crop = "Lavoura não identificada"
             # Mantém no processamento somente os elementos válidos. As colunas
             # S–W e AC em diante continuam existindo apenas no arquivo original.
             analysis_raw = {element: row.get(element) for element in elements}
@@ -1123,7 +1127,7 @@ def render_scatter(result: pd.DataFrame) -> None:
     points = result[result.get("final_status", pd.Series(index=result.index, dtype=object)).isin(visible_statuses)].dropna(subset=["source_row", "value"]).copy()
     if points.empty:
         return
-    width, height = 820, 280
+    width, height = 1100, 280
     # Reserva uma coluna própria para a legenda, sem sobreposição com o gráfico.
     left, right, top, bottom = 145, 16, 18, 38
     # O eixo X é organizado em blocos por lavoura, preservando a ordem em que
