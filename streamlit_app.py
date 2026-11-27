@@ -757,6 +757,9 @@ def export_consolidated(all_results: list[tuple[pd.DataFrame, list[PolygonRecord
     rows = []
     coverage = {}
     for analysis_index, (result, polygons) in enumerate(all_results):
+        required = {"element", "depth", "value", "municipality", "state", "source_row", "point_id"}
+        if result is None or not required.issubset(result.columns):
+            continue
         result = result[(~result.element.map(is_ignored_element)) & (result.depth == "0-10 cm") & result.value.notna()].copy()
         for _, row in result.iterrows():
             area = row.municipality if row.municipality != "Não localizado" else "Não localizado"
@@ -837,6 +840,15 @@ def analysis_identity_key(client_name: object, farm_name: object, excel_name: ob
 def normalise_result_frame(result: pd.DataFrame, radius_m: float = MAX_DISTANCE_M) -> pd.DataFrame:
     """Completa campos de versões antigas para que o filtro 2026 seja uniforme."""
     frame = result.copy()
+    core_defaults = {
+        "client": "", "farm": "", "year": CURRENT_YEAR, "sample_index": np.nan,
+        "source_row": np.nan, "point_id": "", "crop": "", "depth": "",
+        "element": "", "value": np.nan, "municipality": "Não localizado",
+        "state": "Não localizado", "longitude": np.nan, "latitude": np.nan,
+    }
+    for column, default in core_defaults.items():
+        if column not in frame.columns:
+            frame[column] = default
     if frame.empty:
         return frame
     defaults = {
@@ -1213,7 +1225,11 @@ def main():
         st.markdown("<div class='rule-panel'><div class='rule-title'><span>Outliers apenas no último ano</span><span class='badge'>● 2026</span></div><p style='color:#707b6b'>Vá para <b>Fontes</b>, envie os arquivos e clique em <b>Pronto</b> para carregar os resultados.</p></div>", unsafe_allow_html=True)
         return
     current = st.session_state.analyses[-1]
-    result = st.session_state.vision_2026_result.copy()
+    snapshot = st.session_state.get("vision_2026_result")
+    if snapshot is None or snapshot.empty or not {"element", "depth", "value", "client", "farm"}.issubset(snapshot.columns):
+        st.info("As fontes persistidas foram carregadas, mas ainda não possuem resultados detalhados suficientes para a Visão 2026. Reenvie a planilha e o SHP para atualizar essa fonte.")
+        return
+    result = snapshot.copy()
     result = result[~result.element.map(is_ignored_element)].copy()
     if "ml_status" not in result.columns:
         result["ml_status"] = "dados insuficientes"
