@@ -7,6 +7,7 @@ import json
 import math
 import os
 import unicodedata
+import zipfile
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Iterable
@@ -148,18 +149,44 @@ def polygon_area_ha(geometry):
 
 
 def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
-    reader = shapefile.Reader(shp=io.BytesIO(shp_bytes))
-    field_names = [str(field[0]) for field in reader.fields[1:]]
+    archive = zipfile.ZipFile(io.BytesIO(shp_bytes)) if zipfile.is_zipfile(io.BytesIO(shp_bytes)) else None
+    if archive:
+        members = {name.lower(): name for name in archive.namelist() if not name.endswith("/")}
+        shp_member = next((name for key, name in members.items() if key.endswith(".shp")), None)
+        if not shp_member:
+            raise ValueError("O ZIP não contém um arquivo .shp.")
+        stem = shp_member[:-4].lower()
+        reader = shapefile.Reader(
+            shp=io.BytesIO(archive.read(shp_member)),
+            shx=io.BytesIO(archive.read(members[stem + ".shx"])) if stem + ".shx" in members else None,
+            dbf=io.BytesIO(archive.read(members[stem + ".dbf"])) if stem + ".dbf" in members else None,
+        )
+    else:
+        reader = shapefile.Reader(shp=io.BytesIO(shp_bytes))
+    shapes = reader.shapes()
+    field_names: list[str] = []
+    attribute_rows: list[list[object]] = []
+    try:
+        field_names = [str(field[0]) for field in reader.fields[1:]]
+        attribute_rows = reader.records()
+    except (shapefile.ShapefileException, ValueError):
+        # Um .shp isolado não possui a tabela DBF. A geometria continua útil;
+        # os nomes serão obtidos do Excel ou exibidos como não informados.
+        field_names = []
+        attribute_rows = []
     field_keys = {normalise_header_key(name): name for name in field_names}
     producer_field = next((field_keys[key] for key in ("PRODUTOR", "PRODUCER") if key in field_keys), None)
     farm_field = next((field_keys[key] for key in ("FAZENDA", "FARM", "PROPERTY") if key in field_keys), None)
     records = []
-    for shp, attributes in zip(reader.shapes(), reader.records()):
+    for index, shp in enumerate(shapes):
         geometry = shapely_shape(shp.__geo_interface__)
+        attributes = attribute_rows[index] if index < len(attribute_rows) else []
         attribute_map = dict(zip(field_names, attributes))
         producer = str(attribute_map.get(producer_field) or "").strip() if producer_field else ""
         farm = str(attribute_map.get(farm_field) or "").strip() if farm_field else ""
         records.append(PolygonRecord(geometry, polygon_area_ha(geometry), producer, farm))
+    if archive:
+        archive.close()
     return records
 
 
@@ -1089,7 +1116,7 @@ def main():
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1.25, 1.25, 1.25])
         with c1: excel = st.file_uploader("Planilha Excel", type=["xlsx", "xls"], key="excel")
-        with c2: shp = st.file_uploader("Limite SHP", type=["shp"], key="shp")
+        with c2: shp = st.file_uploader("Limite SHP ou ZIP", type=["shp", "zip"], key="shp")
         with c3:
             radius_m = st.number_input("Raio regional (m)", min_value=1.0, max_value=100000.0, value=active_radius, step=10.0, format="%.0f", help="Distância usada para selecionar o histórico regional de cada ponto. Utilize sempre o raio do maior grid para a comparação.", key="radius_m")
         if not LOF_AVAILABLE:
