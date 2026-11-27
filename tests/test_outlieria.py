@@ -156,6 +156,42 @@ class OutlieriaSpatialTests(unittest.TestCase):
         self.assertAlmostEqual(sample.iloc[0]["longitude"], -54.23)
         self.assertAlmostEqual(sample.iloc[0]["latitude"], -28.498)
 
+    def test_persisted_analysis_is_hydrated_for_vision(self):
+        record = app.build_persisted_analysis({
+            "analysis_id": "a1",
+            "source_hash": "hash-1",
+            "client_name": "Cliente",
+            "farm_name": "Fazenda",
+            "name": "dados.xlsx",
+            "shp_name": "limite.shp",
+            "radius_m": 450,
+            "area_ha": 12.5,
+            "result_rows": [{
+                "client": "Cliente", "farm": "Fazenda", "year": "2026",
+                "sample_index": 1, "source_row": 2, "point_id": "P1",
+                "crop": "L01", "depth": "0-10 cm", "element": "PH",
+                "value": 6.2, "final_status": "normal",
+            }],
+            "file_urls": {"excel_original": "https://drive.example/excel"},
+        })
+        self.assertEqual(record["analysis_id"], "a1")
+        self.assertEqual(record["radius_m"], 450.0)
+        self.assertEqual(record["result"].iloc[0]["client"], "Cliente")
+        self.assertEqual(record["file_urls"]["excel_original"], "https://drive.example/excel")
+
+    def test_analysis_identity_changes_when_source_file_changes(self):
+        first = app.analysis_identity_key("Cliente", "Fazenda", "dados.xlsx", "limite.shp")
+        second = app.analysis_identity_key("Cliente", "Fazenda", "dados_atualizados.xlsx", "limite.shp")
+        self.assertNotEqual(first, second)
+
+    def test_session_upsert_replaces_same_logical_source(self):
+        previous = {"analysis_key": "same", "source_hash": "old", "name": "old.xlsx"}
+        replacement = {"analysis_key": "same", "source_hash": "new", "name": "new.xlsx"}
+        app.st.session_state.analyses = [previous]
+        replaced = app.upsert_session_analysis(replacement)
+        self.assertTrue(replaced)
+        self.assertEqual(app.st.session_state.analyses, [replacement])
+
 
 if __name__ == "__main__":
     unittest.main()

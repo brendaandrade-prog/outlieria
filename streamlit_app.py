@@ -20,7 +20,14 @@ from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from shapely.geometry import Point, shape as shapely_shape
-from cloud_storage import configured as cloud_storage_configured, missing_settings, persist_analysis
+from cloud_storage import (
+    configured as cloud_storage_configured,
+    database_configured,
+    load_persisted_analyses,
+    missing_settings,
+    persist_analysis,
+    sha256,
+)
 SKLEARN_IMPORT_ERROR = ""
 try:
     from sklearn.neighbors import LocalOutlierFactor
@@ -628,6 +635,8 @@ def apply_ph_smp_validation(result: pd.DataFrame) -> pd.DataFrame:
     frame["ph_smp_status"] = ""
     if frame.empty or "element" not in frame.columns:
         return frame
+    if "sample_index" not in frame.columns:
+        frame["sample_index"] = frame.get("source_row", pd.Series(frame.index, index=frame.index))
     normalized = frame["element"].astype(str).str.strip().str.upper()
     ph_rows = frame[normalized == "PH"]
     smp_rows = frame[normalized == "SMP"]
@@ -819,6 +828,94 @@ def is_ignored_element(value: object) -> bool:
     return normalized in IGNORED_ELEMENTS or normalized.startswith("SATURAC")
 
 
+def analysis_identity_key(client_name: object, farm_name: object, excel_name: object, shp_name: object) -> str:
+    """Chave estável para reconhecer a mesma fonte mesmo quando seu conteúdo mudou."""
+    values = [client_name, farm_name, CURRENT_YEAR, excel_name, shp_name]
+    return "|".join(str(value or "").strip().casefold() for value in values)
+
+
+def normalise_result_frame(result: pd.DataFrame, radius_m: float = MAX_DISTANCE_M) -> pd.DataFrame:
+    """Completa campos de versões antigas para que o filtro 2026 seja uniforme."""
+    frame = result.copy()
+    if frame.empty:
+        return frame
+    defaults = {
+        "ml_status": "dados insuficientes",
+        "ml_score": np.nan,
+        "ml_neighbor_count": np.nan,
+        "ml_k_effective": np.nan,
+        "ml_radius_m": radius_m,
+        "ml_rule": "LOF não disponível nesta análise persistida",
+        "reg_status": "dados insuficientes",
+        "reg_prediction": np.nan,
+        "reg_residual": np.nan,
+        "reg_score": np.nan,
+        "reg_cycles": 0,
+        "reg_rule": "Regressão não disponível nesta análise persistida",
+    }
+    for column, default in defaults.items():
+        if column not in frame.columns:
+            frame[column] = default
+        elif column in {"ml_status", "ml_rule", "reg_status", "reg_rule"}:
+            frame[column] = frame[column].fillna(default)
+    if "final_status" not in frame.columns:
+        frame["final_status"] = frame.apply(combine_detection, axis=1)
+    else:
+        frame["final_status"] = frame["final_status"].fillna(frame.apply(combine_detection, axis=1))
+    frame = apply_ph_smp_validation(frame)
+    frame["display_status"] = frame.apply(display_classification, axis=1)
+    return frame
+
+
+def build_persisted_analysis(payload: dict[str, object]) -> dict[str, object]:
+    result = normalise_result_frame(pd.DataFrame(payload.get("result_rows", [])), float(payload.get("radius_m") or MAX_DISTANCE_M))
+    client_name = str(payload.get("client_name") or (result.client.dropna().iloc[0] if not result.empty and result.client.notna().any() else "—"))
+    farm_name = str(payload.get("farm_name") or (result.farm.dropna().iloc[0] if not result.empty and result.farm.notna().any() else "—"))
+    area_ha = float(payload.get("area_ha") or 0)
+    polygons = [PolygonRecord(None, area_ha)] if area_ha else []
+    name = str(payload.get("name") or f"{farm_name}_{CURRENT_YEAR}.xlsx")
+    shp_name = str(payload.get("shp_name") or f"{farm_name}_limite.shp")
+    return {
+        "analysis_id": payload.get("analysis_id"),
+        "source_hash": payload.get("source_hash", ""),
+        "analysis_key": analysis_identity_key(client_name, farm_name, name, shp_name),
+        "name": name,
+        "shp_name": shp_name,
+        "client_name": client_name,
+        "farm_name": farm_name,
+        "original": b"",
+        "shp_bytes": b"",
+        "radius_m": float(payload.get("radius_m") or MAX_DISTANCE_M),
+        "result": result,
+        "evidence": select_evidence(result),
+        "attention": result[result.final_status == "atenção"].copy() if "final_status" in result.columns else result.iloc[0:0].copy(),
+        "polygons": polygons,
+        "area_ha": area_ha,
+        "elements": ordered_unique(result.element) if not result.empty and "element" in result.columns else [],
+        "file_urls": payload.get("file_urls", {}),
+        "updated_at": payload.get("updated_at"),
+        "point_count": payload.get("point_count", 0),
+        "persisted": True,
+    }
+
+
+def build_vision_snapshot(analyses: list[dict[str, object]]) -> pd.DataFrame | None:
+    frames = [analysis["result"] for analysis in analyses if isinstance(analysis.get("result"), pd.DataFrame) and not analysis["result"].empty]
+    return pd.concat(frames, ignore_index=True).copy() if frames else None
+
+
+def upsert_session_analysis(record: dict[str, object]) -> bool:
+    """Substitui a fonte existente por identidade/hash; não duplica reenvios."""
+    for index, current in enumerate(st.session_state.analyses):
+        same_hash = record.get("source_hash") and current.get("source_hash") == record.get("source_hash")
+        same_identity = record.get("analysis_key") and current.get("analysis_key") == record.get("analysis_key")
+        if same_hash or same_identity:
+            st.session_state.analyses[index] = record
+            return True
+    st.session_state.analyses.append(record)
+    return False
+
+
 def render_scatter(result: pd.DataFrame) -> None:
     """Renderiza dispersão em SVG, sem Altair, Plotly ou dependências de gráfico."""
     points = result.dropna(subset=["source_row", "value"]).copy()
@@ -923,14 +1020,21 @@ def main():
     st.set_page_config(page_title="Outlieria", page_icon="◌", layout="wide", initial_sidebar_state="expanded")
     inject_style()
     if "analyses" not in st.session_state: st.session_state.analyses = []
+    if "persisted_analyses_loaded" not in st.session_state:
+        st.session_state.persisted_analyses_loaded = False
+    if not st.session_state.persisted_analyses_loaded:
+        if database_configured():
+            try:
+                persisted = [build_persisted_analysis(payload) for payload in load_persisted_analyses(int(CURRENT_YEAR))]
+                st.session_state.analyses = persisted
+            except Exception as storage_exc:
+                st.warning(f"Não foi possível carregar as análises persistidas: {storage_exc}")
+        st.session_state.persisted_analyses_loaded = True
     # O Streamlit reexecuta o script ao trocar a navegação. Mantemos um
     # snapshot explícito da visão para que essa reexecução não apague os dados
     # exibidos; ele só é substituído quando uma nova análise é processada.
     if "vision_2026_result" not in st.session_state:
-        st.session_state.vision_2026_result = (
-            pd.concat([analysis["result"] for analysis in st.session_state.analyses], ignore_index=True).copy()
-            if st.session_state.analyses else None
-        )
+        st.session_state.vision_2026_result = build_vision_snapshot(st.session_state.analyses)
     if "vision_2026_revision" not in st.session_state:
         st.session_state.vision_2026_revision = 0
     active_radius = float(st.session_state.analyses[-1].get("radius_m", MAX_DISTANCE_M)) if st.session_state.analyses else MAX_DISTANCE_M
@@ -1025,23 +1129,44 @@ def main():
                         client_name = str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente"
                         farm_name = str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda"
                         area_ha = sum(p.area_ha for p in polygons)
-                        st.session_state.analyses.append({"name": excel.name, "original": original_bytes, "shp_bytes": shp_bytes, "radius_m": radius_m, "result": result, "evidence": evidence, "attention": attention, "polygons": polygons, "elements": elements})
-                        # A troca de aba mantém este snapshot. A inserção de
-                        # novos arquivos é o único evento que atualiza a visão.
-                        st.session_state.vision_2026_result = pd.concat(
-                            [analysis["result"] for analysis in st.session_state.analyses],
-                            ignore_index=True,
-                        ).copy()
-                        st.session_state.vision_2026_revision += 1
-                        if cloud_storage_configured():
+                        persisted_metadata = {}
+                        if database_configured():
                             try:
-                                persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel.name, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention), lof_min_neighbors=MIN_LOF_NEIGHBORS)
-                                st.success("Análise processada e persistida no Supabase e no Google Drive.")
+                                persisted_metadata = persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel.name, shp_name=shp.name, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention), result=result, lof_min_neighbors=MIN_LOF_NEIGHBORS) or {}
+                                if cloud_storage_configured():
+                                    st.success("Análise atualizada no Supabase e no Google Drive.")
+                                else:
+                                    st.success("Análise atualizada no Supabase; configure o Google Drive para armazenar os arquivos.")
                             except Exception as storage_exc:
                                 st.warning(f"A análise foi processada nesta sessão, mas não pôde ser sincronizada com a nuvem: {storage_exc}")
                         else:
                             missing = ", ".join(missing_settings())
                             st.warning(f"A análise foi processada somente nesta sessão. Configure estas Secrets no Streamlit Cloud para ativar o Supabase e o Google Drive: {missing}.")
+                        record = {
+                            "analysis_id": persisted_metadata.get("analysis_id"),
+                            "source_hash": persisted_metadata.get("source_hash") or sha256(original_bytes + shp_bytes),
+                            "analysis_key": analysis_identity_key(client_name, farm_name, excel.name, shp.name),
+                            "name": excel.name,
+                            "shp_name": shp.name,
+                            "client_name": client_name,
+                            "farm_name": farm_name,
+                            "original": original_bytes,
+                            "shp_bytes": shp_bytes,
+                            "radius_m": radius_m,
+                            "result": result,
+                            "evidence": evidence,
+                            "attention": attention,
+                            "polygons": polygons,
+                            "area_ha": area_ha,
+                            "elements": elements,
+                            "file_urls": persisted_metadata.get("file_urls", {}),
+                            "persisted": bool(persisted_metadata.get("analysis_id")),
+                        }
+                        upsert_session_analysis(record)
+                        # A troca de aba mantém este snapshot; cada novo envio
+                        # substitui a fonte correspondente e atualiza a visão.
+                        st.session_state.vision_2026_result = build_vision_snapshot(st.session_state.analyses)
+                        st.session_state.vision_2026_revision += 1
                         st.success(f"Aba 2026 atualizada: {len(evidence)} outliers confirmados exibidos.")
                     except Exception as exc: st.exception(exc)
         st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
@@ -1057,19 +1182,30 @@ def main():
                 with st.container(border=True):
                     row_main, row_client, row_farm, row_date, row_area, row_download = st.columns([2.5, 1.2, 1.35, 1.0, 1.0, 1.35])
                     with row_main:
-                        st.markdown(f"**▧  {farm_name} · análise 2026**<br><span class='mono' style='font-size:9px;color:#7c8179'>planilha + limite SHP armazenados nesta sessão</span>", unsafe_allow_html=True)
+                        storage_note = "arquivos e resultados persistidos" if analysis.get("persisted") else "arquivos armazenados nesta sessão"
+                        st.markdown(f"**▧  {farm_name} · análise 2026**<br><span class='mono' style='font-size:9px;color:#7c8179'>{storage_note}</span>", unsafe_allow_html=True)
+                        persisted_links = analysis.get("file_urls", {})
+                        if not analysis.get("original") and persisted_links:
+                            links = [f"[{label}]({url})" for label, key in (("Excel", "excel_original"), ("SHP", "shp"), ("reanálise", "reanálise_2026")) if (url := persisted_links.get(key))]
+                            if links:
+                                st.caption("Arquivos: " + " · ".join(links))
                     with row_client:
                         st.caption("CLIENTE"); st.markdown(f"**{client_name}**")
                     with row_farm:
                         st.caption("FAZENDA"); st.markdown(f"**{farm_name}**")
                     with row_date:
-                        st.caption("INSERÇÃO"); st.markdown(f"**{datetime.now().strftime('%d %b %Y')}**")
+                        st.caption("ATUALIZAÇÃO"); st.markdown(f"**{str(analysis.get('updated_at') or datetime.now().strftime('%d %b %Y'))[:10]}**")
                     with row_area:
                         st.caption("ÁREA 2026"); st.markdown(f"**{area_ha:,.1f} ha**".replace(',', 'X').replace('.', ',').replace('X', '.'))
                     with row_download:
                         st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
                         export_rows = analysis["evidence"]
-                        st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], export_rows, float(analysis.get("radius_m", MAX_DISTANCE_M))), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis_index}_{analysis['name']}")
+                        if analysis.get("original"):
+                            st.download_button("⇩  BAIXAR PLANILHA", export_individual(analysis["original"], export_rows, float(analysis.get("radius_m", MAX_DISTANCE_M))), f"outlieria_reanalise_2026_{analysis['name']}", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"download_{analysis_index}_{analysis['name']}")
+                        elif analysis.get("file_urls", {}).get("reanálise_2026"):
+                            st.link_button("↗  ABRIR REANÁLISE", analysis["file_urls"]["reanálise_2026"], use_container_width=True)
+                        else:
+                            st.caption("arquivo original não disponível")
             st.markdown("<div class='section-kicker' style='margin-top:18px'>exportação consolidada · somente 0–10 cm</div>", unsafe_allow_html=True)
         return
     if not st.session_state.analyses:

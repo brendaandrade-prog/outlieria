@@ -40,7 +40,9 @@ create index if not exists analysis_files_analysis_idx on public.analysis_files 
 create table if not exists public.analysis_points (
   id uuid primary key default gen_random_uuid(),
   analysis_id uuid not null references public.analyses(id) on delete cascade,
+  point_key text,
   point_id text,
+  sample_index integer,
   source_row integer,
   year integer,
   crop text,
@@ -60,6 +62,7 @@ create table if not exists public.analysis_results (
   element text not null,
   value numeric(18,6),
   historical_mean numeric(18,6),
+  historical_median numeric(18,6),
   q1 numeric(18,6),
   q3 numeric(18,6),
   iqr numeric(18,6),
@@ -74,13 +77,47 @@ create table if not exists public.analysis_results (
   ml_radius_m numeric(12,2),
   ml_rule text,
   ml_mean_distance_m numeric(18,4),
+  ml_regional_median numeric(18,6),
+  ml_reference_scope text,
+  ml_historical_percentile numeric(18,8),
+  ml_historical_distribution_shift numeric(18,8),
+  ml_current_cohort_shift numeric(18,8),
+  reg_status text,
+  reg_prediction numeric(18,6),
+  reg_residual numeric(18,6),
+  reg_score numeric(18,8),
+  reg_cycles integer,
+  reg_rule text,
+  ph_smp_status text,
+  display_status text,
+  sample_index integer,
   final_status text,
   created_at timestamptz not null default now(),
   unique (analysis_id, point_id_ref, element)
 );
 
+-- Migrações aditivas para bases que já existiam antes da persistência detalhada.
+alter table public.analysis_points add column if not exists point_key text;
+alter table public.analysis_points add column if not exists sample_index integer;
+alter table public.analysis_results add column if not exists historical_median numeric(18,6);
+alter table public.analysis_results add column if not exists ml_regional_median numeric(18,6);
+alter table public.analysis_results add column if not exists ml_reference_scope text;
+alter table public.analysis_results add column if not exists ml_historical_percentile numeric(18,8);
+alter table public.analysis_results add column if not exists ml_historical_distribution_shift numeric(18,8);
+alter table public.analysis_results add column if not exists ml_current_cohort_shift numeric(18,8);
+alter table public.analysis_results add column if not exists reg_status text;
+alter table public.analysis_results add column if not exists reg_prediction numeric(18,6);
+alter table public.analysis_results add column if not exists reg_residual numeric(18,6);
+alter table public.analysis_results add column if not exists reg_score numeric(18,8);
+alter table public.analysis_results add column if not exists reg_cycles integer;
+alter table public.analysis_results add column if not exists reg_rule text;
+alter table public.analysis_results add column if not exists ph_smp_status text;
+alter table public.analysis_results add column if not exists display_status text;
+alter table public.analysis_results add column if not exists sample_index integer;
+
 create index if not exists analysis_points_analysis_idx on public.analysis_points (analysis_id);
 create index if not exists analysis_points_location_idx on public.analysis_points (municipality, state);
+create index if not exists analysis_points_key_idx on public.analysis_points (analysis_id, point_key);
 create index if not exists analysis_results_analysis_idx on public.analysis_results (analysis_id);
 create index if not exists analysis_results_element_idx on public.analysis_results (element, final_status);
 
