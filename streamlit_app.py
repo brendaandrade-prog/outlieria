@@ -1463,7 +1463,8 @@ def main():
         c1, c2 = st.columns([3,1])
         with c1:
             st.markdown("<div class='section-head'><div><div class='section-kicker'>01 / distribuição</div><h2>Leitura dos elementos em 2026</h2></div></div>", unsafe_allow_html=True)
-            element_options = element_order or ["Sem dados"]
+            # Mantém a sequência original da planilha; o catálogo global é apenas fallback.
+            element_options = ordered_unique(result.element) or element_order or ["Sem dados"]
             depth_options = ordered_unique(result.depth) or ["Sem dados"]
             element = st.selectbox("Elemento", element_options, format_func=element_label, label_visibility="collapsed")
             depth = st.selectbox("Profundidade", depth_options, label_visibility="collapsed")
