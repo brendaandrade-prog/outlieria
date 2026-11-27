@@ -1341,7 +1341,7 @@ def render_spatial_map(result: pd.DataFrame, polygons: list[PolygonRecord] | Non
     hover_rules = "".join(f'.outlieria-spatial-svg:has(.spatial-point-{index}:hover) .spatial-tooltip-{index}{{opacity:1}}' for index in range(len(circles)))
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="9"><circle cx="13" cy="28" r="4" fill="#b79b43"/><text x="23" y="31" fill="#6f7c76">atenção</text><circle cx="13" cy="48" r="4" fill="#d8793e"/><text x="23" y="51" fill="#6f7c76">outlier 2026</text><circle cx="13" cy="68" r="4" fill="#7656a8"/><text x="23" y="71" fill="#6f7c76">anomalia</text></g>'
     spatial_html = f'''<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px;overflow:hidden">
-<svg id="outlieria-spatial-map" class="outlieria-spatial-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Mapa espacial dos pontos" style="overflow:hidden;cursor:zoom-in">
+<svg id="outlieria-spatial-map" class="outlieria-spatial-svg" viewBox="0 0 {width} {height}" width="100%" height="{height}" role="img" aria-label="Mapa espacial dos pontos" style="overflow:hidden;cursor:zoom-in;touch-action:none">
 <style>.spatial-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>
 <g id="spatial-map-content">{"".join(grid_parts)}{boundaries}{"".join(circles)}<g>{"".join(tooltips)}</g></g>{legend}
 </svg></div>
@@ -1349,8 +1349,15 @@ def render_spatial_map(result: pd.DataFrame, polygons: list[PolygonRecord] | Non
 (() => {{
   const svg = document.getElementById('outlieria-spatial-map');
   const content = document.getElementById('spatial-map-content');
-  let zoom = 1, tx = 0, ty = 0;
+  let zoom = 1, tx = 0, ty = 0, dragging = false, lastX = 0, lastY = 0;
   const viewWidth = {width}, viewHeight = {height};
+  const clampPan = () => {{
+    const minX = viewWidth - viewWidth * zoom;
+    const minY = viewHeight - viewHeight * zoom;
+    tx = zoom <= 1 ? 0 : Math.max(minX, Math.min(0, tx));
+    ty = zoom <= 1 ? 0 : Math.max(minY, Math.min(0, ty));
+  }};
+  const updateTransform = () => content.setAttribute('transform', `translate(${{tx}} ${{ty}}) scale(${{zoom}})`);
   svg.addEventListener('wheel', (event) => {{
     event.preventDefault();
     const rect = svg.getBoundingClientRect();
@@ -1361,9 +1368,38 @@ def render_spatial_map(result: pd.DataFrame, polygons: list[PolygonRecord] | Non
     tx = x - (x - tx) * ratio;
     ty = y - (y - ty) * ratio;
     zoom = nextZoom;
-    content.setAttribute('transform', `translate(${{tx}} ${{ty}}) scale(${{zoom}})`);
-    svg.style.cursor = zoom > 1 ? 'zoom-out' : 'zoom-in';
+    clampPan();
+    updateTransform();
+    svg.style.cursor = zoom > 1 ? 'grab' : 'zoom-in';
   }}, {{ passive: false }});
+  svg.addEventListener('pointerdown', (event) => {{
+    if (zoom <= 1) return;
+    dragging = true;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    svg.setPointerCapture(event.pointerId);
+    svg.style.cursor = 'grabbing';
+    event.preventDefault();
+  }});
+  svg.addEventListener('pointermove', (event) => {{
+    if (!dragging) return;
+    const rect = svg.getBoundingClientRect();
+    tx += (event.clientX - lastX) * viewWidth / rect.width;
+    ty += (event.clientY - lastY) * viewHeight / rect.height;
+    clampPan();
+    lastX = event.clientX;
+    lastY = event.clientY;
+    updateTransform();
+    event.preventDefault();
+  }});
+  const stopDragging = (event) => {{
+    if (!dragging) return;
+    dragging = false;
+    if (event.pointerId !== undefined) svg.releasePointerCapture(event.pointerId);
+    svg.style.cursor = zoom > 1 ? 'grab' : 'zoom-in';
+  }};
+  svg.addEventListener('pointerup', stopDragging);
+  svg.addEventListener('pointercancel', stopDragging);
 }})();
 </script>'''
     components.html(spatial_html, height=height + 18, scrolling=False)
