@@ -1227,10 +1227,9 @@ def main():
     with st.sidebar:
         st.markdown("<div class='brand'><span class='brand-mark'></span><span>outlieria</span></div>", unsafe_allow_html=True)
         st.markdown("<div class='rail-caption'>análise agrícola</div>", unsafe_allow_html=True)
+        page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
         st.markdown(f"<div class='rail-caption' style='margin-top:30px'>recorte ativo</div><div class='scope'><strong>2026</strong><span>último ano · {active_radius:g} m</span></div>", unsafe_allow_html=True)
     st.markdown("<div class='topbar'><div class='mono' style='color:#737d76'>ANÁLISE AGRÍCOLA &nbsp;/&nbsp; <b>PAINEL 2026</b></div><span class='tab-loading'><span class='tab-loading-dot'></span>carregando</span><span class='badge'>● ABA 2026</span></div>", unsafe_allow_html=True)
-    with st.sidebar:
-        page = st.radio("Navegação", ["Visão 2026", "Fontes"], label_visibility="collapsed")
     if page == "Fontes":
         st.markdown("<div class='eyebrow'>— &nbsp; FONTES DE DADOS</div><h1>Cadastre as fontes<br><em>uma única vez.</em></h1><p class='lead'>Envie a planilha agrícola e o limite SHP. O processamento começa somente depois de clicar em <b>Pronto</b>.</p>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1.25, 1.25, 1.25])
