@@ -1521,5 +1521,5 @@ def main():
         st.dataframe(frame_for_display(table), column_config={"valor": st.column_config.NumberColumn("valor", format="%.2f")}, use_container_width=True, hide_index=True, height=430)
 
 
-    if __name__ == "__main__":
-        main()
+if __name__ == "__main__":
+    main()
