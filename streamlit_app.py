@@ -697,7 +697,10 @@ def run_spatial_regression(sample: pd.DataFrame, elements: list[str], radius_m: 
 
 def apply_ph_smp_validation(result: pd.DataFrame) -> pd.DataFrame:
     """Marca o pH quando ele está acima do SMP do mesmo ponto."""
-    frame = result.copy()
+    # Alguns Excel podem carregar cabeçalhos repetidos. Sem esta proteção,
+    # frame["value"] retorna uma DataFrame e a comparação abaixo deixa de ser
+    # escalar, gerando o ValueError de ambiguidade booleana.
+    frame = result.loc[:, ~result.columns.duplicated()].copy()
     frame["ph_smp_status"] = ""
     if frame.empty or "element" not in frame.columns:
         return frame
@@ -709,6 +712,9 @@ def apply_ph_smp_validation(result: pd.DataFrame) -> pd.DataFrame:
     if ph_rows.empty or smp_rows.empty:
         return frame
     smp_by_point = pd.to_numeric(smp_rows.set_index("sample_index")["value"], errors="coerce")
+    if isinstance(smp_by_point, pd.DataFrame):
+        smp_by_point = smp_by_point.iloc[:, 0]
+    smp_by_point = smp_by_point.groupby(level=0).first()
     for index, row in ph_rows.iterrows():
         smp_value = smp_by_point.get(row["sample_index"], np.nan)
         ph_value = pd.to_numeric(pd.Series([row["value"]]), errors="coerce").iloc[0]
