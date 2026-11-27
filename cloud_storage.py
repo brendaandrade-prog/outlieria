@@ -4,6 +4,7 @@ import hashlib
 import io
 import math
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -169,6 +170,11 @@ def _is_missing_column_error(exc: Exception) -> bool:
             "pgrst204",
         )
     )
+
+
+def _missing_column_name(exc: Exception) -> str | None:
+    match = re.search(r"Could not find the '([^']+)' column", str(exc), flags=re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 def _analysis_files(analysis_id: str) -> list[dict[str, Any]]:
@@ -364,16 +370,38 @@ def _insert_results(analysis_id: str, result_rows: list[dict[str, Any]], point_i
     except requests.HTTPError as exc:
         if not _is_missing_column_error(exc):
             raise
-        # Compatibilidade com o schema antigo: os campos principais continuam
-        # disponíveis e permitem que a Visão 2026 seja reconstruída.
-        legacy_fields = {
-            "analysis_id", "point_id_ref", "element", "value", "historical_mean", "q1", "q3", "iqr",
-            "lower_fence", "upper_fence", "statistical_status", "direction", "ml_status", "ml_score",
-            "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "final_status",
-        }
-        supabase_request(f"analysis_results?analysis_id=eq.{analysis_id}", "DELETE")
-        for chunk in _chunks([{key: value for key, value in row.items() if key in legacy_fields} for row in rows]):
-            supabase_request("analysis_results", "POST", chunk)
+        # Instalações antigas podem estar vários commits atrás do schema.
+        # Remove exatamente a coluna reportada pelo PostgREST e tenta de novo
+        # até chegar ao conjunto de campos suportado pela tabela real.
+        compatible_rows = [dict(row) for row in rows]
+        missing_column = _missing_column_name(exc)
+        if missing_column:
+            for row in compatible_rows:
+                row.pop(missing_column, None)
+        else:
+            compatible_rows = [
+                {key: value for key, value in row.items() if key in {
+                    "analysis_id", "point_id_ref", "element", "value", "historical_mean", "q1", "q3", "iqr",
+                    "lower_fence", "upper_fence", "statistical_status", "direction", "ml_status", "ml_score",
+                    "ml_neighbor_count", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "final_status",
+                }}
+                for row in rows
+            ]
+        for _ in range(30):
+            supabase_request(f"analysis_results?analysis_id=eq.{analysis_id}", "DELETE")
+            try:
+                for chunk in _chunks(compatible_rows):
+                    supabase_request("analysis_results", "POST", chunk)
+                return
+            except requests.HTTPError as retry_exc:
+                if not _is_missing_column_error(retry_exc):
+                    raise
+                missing_column = _missing_column_name(retry_exc)
+                if not missing_column or not any(missing_column in row for row in compatible_rows):
+                    raise
+                for row in compatible_rows:
+                    row.pop(missing_column, None)
+        raise RuntimeError("O schema Supabase possui mais de 30 colunas incompatíveis em analysis_results.")
 
 
 def _replace_persisted_rows(analysis_id: str, result: Any) -> None:

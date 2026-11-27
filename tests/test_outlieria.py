@@ -1,12 +1,15 @@
 import io
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import requests
 from openpyxl import Workbook
 from shapely.geometry import Polygon
 
 import streamlit_app as app
+import cloud_storage
 
 
 class OutlieriaSpatialTests(unittest.TestCase):
@@ -195,6 +198,26 @@ class OutlieriaSpatialTests(unittest.TestCase):
         self.assertEqual(snapshot.iloc[0]["client"], "Cliente antigo")
         self.assertEqual(snapshot.iloc[0]["farm"], "Fazenda antiga")
         self.assertTrue(pd.isna(snapshot.iloc[0]["value"]))
+
+    def test_result_persistence_retries_when_schema_lacks_column(self):
+        row = {
+            "source_row": 2, "point_id": "P1", "year": 2026,
+            "crop": "L01", "depth": "0-10 cm", "longitude": -50.0,
+            "latitude": -20.0, "element": "PH", "value": 6.0,
+        }
+        calls = []
+
+        def fake_request(path, method="GET", payload=None, params=None):
+            calls.append((path, method, payload))
+            if path == "analysis_results" and method == "POST" and payload and "ml_k_effective" in payload[0]:
+                raise requests.HTTPError("400 — resposta Supabase: {\"code\":\"PGRST204\",\"message\":\"Could not find the 'ml_k_effective' column of 'analysis_results' in the schema cache\"}")
+            return [{"id": "result-1"}]
+
+        with patch.object(cloud_storage, "supabase_request", side_effect=fake_request):
+            cloud_storage._insert_results("analysis-1", [row], {cloud_storage._point_identity(row): "point-1"})
+        posts = [payload for path, method, payload in calls if path == "analysis_results" and method == "POST"]
+        self.assertGreaterEqual(len(posts), 2)
+        self.assertNotIn("ml_k_effective", posts[-1][0])
 
     def test_session_upsert_replaces_same_logical_source(self):
         previous = {"analysis_key": "same", "source_hash": "old", "name": "old.xlsx"}
