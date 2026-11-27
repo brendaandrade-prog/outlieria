@@ -1014,7 +1014,9 @@ def render_scatter(result: pd.DataFrame) -> None:
     for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
         status = str(row.get("final_status", row.get("status", "normal"))); color = colors.get(status, "#487c80")
         px, py = sx(x), sy(y)
-        tooltip_x, tooltip_y = min(px + 9, width - 158), max(py - 42, 5)
+        # Mantém o cartão branco acima do marcador, liberando a área de dados
+        # para inspeção sem cobrir o próprio ponto.
+        tooltip_x, tooltip_y = min(px + 9, width - 158), max(py - 58, 4)
         point_id = html.escape(str(row.get("point_id", row.get("source_row", ""))))
         ml_score = row.get("ml_score")
         score_text = f" · LOF: {float(ml_score):.2f}" if pd.notna(ml_score) else ""
@@ -1335,12 +1337,30 @@ def main():
     st.markdown("<div class='eyebrow'>— &nbsp; RADAR DE LAVOURAS / RECORTE 2026</div><h1>O que saiu do padrão<br><em>no último ano?</em></h1><p class='lead'>O histórico define a referência. Os sinais exibidos aqui pertencem somente à aba 2026.</p>", unsafe_allow_html=True)
     filter_col1, filter_col2 = st.columns(2)
     client_options = ["Todos"] + sorted(result.client.dropna().astype(str).unique().tolist())
+    saved_client = str(st.session_state.get("vision_client_filter", "Todos"))
+    if saved_client not in client_options:
+        saved_client = "Todos"
+        st.session_state.vision_client_filter = saved_client
+        st.session_state.pop("vision_client_widget", None)
+    client_index = client_options.index(saved_client)
     with filter_col1:
-        selected_client = st.selectbox("Cliente", client_options, key=f"analysis_client_{st.session_state.vision_2026_revision}")
+        selected_client = st.selectbox("Cliente", client_options, index=client_index, key="vision_client_widget")
+    client_changed = selected_client != saved_client
+    st.session_state.vision_client_filter = selected_client
+    if client_changed:
+        st.session_state.vision_farm_filter = ""
+        st.session_state.pop("vision_farm_widget", None)
     farm_source = result[result.client.astype(str) == selected_client] if selected_client != "Todos" else result.iloc[0:0]
     farm_options = ["Selecione um cliente"] if selected_client == "Todos" else ["Selecione uma fazenda"] + ordered_unique(farm_source.farm)
+    saved_farm = str(st.session_state.get("vision_farm_filter", ""))
+    if saved_farm not in farm_options:
+        saved_farm = farm_options[0]
+        st.session_state.vision_farm_filter = saved_farm
+        st.session_state.pop("vision_farm_widget", None)
+    farm_index = farm_options.index(saved_farm)
     with filter_col2:
-        selected_farm = st.selectbox("Fazenda", farm_options, key=f"analysis_farm_{st.session_state.vision_2026_revision}", disabled=selected_client == "Todos")
+        selected_farm = st.selectbox("Fazenda", farm_options, index=farm_index, key="vision_farm_widget", disabled=selected_client == "Todos")
+    st.session_state.vision_farm_filter = selected_farm
     if selected_client == "Todos" or selected_farm in {"Selecione um cliente", "Selecione uma fazenda"}:
         st.info("Selecione um cliente e uma fazenda para carregar os dados da Visão 2026.")
         return
