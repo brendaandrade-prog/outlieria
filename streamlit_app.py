@@ -11,6 +11,7 @@ import zipfile
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -1104,7 +1105,8 @@ def render_scatter(result: pd.DataFrame) -> None:
         return f"{value:.1f}" if step == 0.5 else f"{value:.0f}"
     colors = {"outlier confirmado": "#c94b35", "outlier estatístico": "#d8793e", "anomalia temporal": "#bd6b37", "anomalia espacial": "#7656a8", "outlier": "#d8793e", "atenção": "#b79b43", "normal": "#487c80"}
     circles = []
-    for (_, row), x, y in zip(points.iterrows(), x_values, y_values):
+    tooltips = []
+    for point_index, ((_, row), x, y) in enumerate(zip(points.iterrows(), x_values, y_values)):
         status = str(row.get("final_status", row.get("status", "normal"))); color = colors.get(status, "#487c80")
         px, py = sx(x), sy(y)
         # Mantém o cartão branco acima do marcador, liberando a área de dados
@@ -1113,7 +1115,8 @@ def render_scatter(result: pd.DataFrame) -> None:
         point_id = html.escape(str(row.get("point_id", row.get("source_row", ""))))
         ml_score = row.get("ml_score")
         score_text = f" · LOF: {float(ml_score):.2f}" if pd.notna(ml_score) else ""
-        circles.append(f'<g class="outlieria-point"><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/><g class="point-tooltip" style="z-index:100"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="148" height="46" rx="5" fill="#ffffff" fill-opacity="1" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {y:.2f}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 40:.1f}" font-family="IBM Plex Mono, monospace" font-size="8" fill="#7656a8">{html.escape(status)}{score_text}</text></g></g>')
+        circles.append(f'<g class="outlieria-point point-{point_index}"><circle cx="{px:.1f}" cy="{py:.1f}" r="4.5" fill="{color}" stroke="#fffdf8" stroke-width="1.5"/></g>')
+        tooltips.append(f'<g class="point-tooltip tooltip-{point_index}" style="z-index:100"><rect x="{tooltip_x:.1f}" y="{tooltip_y:.1f}" width="148" height="46" rx="5" fill="#ffffff" fill-opacity="1" stroke="#dce1d1"/><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 14:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#173638">Vértice / ID: {point_id}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 27:.1f}" font-family="IBM Plex Mono, monospace" font-size="9" fill="#5d6d68">Valor: {y:.2f}</text><text x="{tooltip_x + 9:.1f}" y="{tooltip_y + 40:.1f}" font-family="IBM Plex Mono, monospace" font-size="8" fill="#7656a8">{html.escape(status)}{score_text}</text></g>')
     grid_parts = []
     y_ticks = np.arange(y_min, y_max + y_step * 0.01, y_step)
     for y_tick in y_ticks:
@@ -1127,16 +1130,19 @@ def render_scatter(result: pd.DataFrame) -> None:
         grid_parts.append(f'<text x="{gx:.1f}" y="{height - bottom + 17}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{tick_text(x_tick, x_step)}</text>')
     grid = "".join(grid_parts)
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="10"><circle cx="55" cy="265" r="4" fill="#487c80"/><text x="64" y="269" fill="#6f7c76">padrão</text><circle cx="140" cy="265" r="4" fill="#b79b43"/><text x="149" y="269" fill="#6f7c76">atenção</text><circle cx="225" cy="265" r="4" fill="#d8793e"/><text x="234" y="269" fill="#6f7c76">outlier 2026</text></g>'
-    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.outlieria-point .point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}.outlieria-point:hover .point-tooltip{{opacity:1}}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}{legend}</svg></div>', unsafe_allow_html=True)
+    hover_rules = "".join(f".outlieria-svg:has(.point-{index}:hover) .tooltip-{index}{{opacity:1}}" for index in range(len(circles)))
+    st.markdown(f'<div style="background:#fffdf8;border:1px solid #dce1d1;border-radius:10px;padding:4px 8px"><svg class="outlieria-svg" viewBox="0 0 {width} {height}" width="100%" height="280" role="img" aria-label="Gráfico de dispersão"><style>.point-tooltip{{opacity:0;pointer-events:none;transition:opacity .12s;isolation:isolate;z-index:100}}{hover_rules}</style>{grid}<line x1="{left}" x2="{left}" y1="{top}" y2="{height-bottom}" stroke="#aeb8ad"/><line x1="{left}" x2="{width-right}" y1="{height-bottom}" y2="{height-bottom}" stroke="#aeb8ad"/>{"".join(circles)}<g class="outlieria-tooltips">{"".join(tooltips)}</g>{legend}</svg></div>', unsafe_allow_html=True)
 
 
 def format_source_timestamp(value: object) -> str:
-    """Formata timestamps do Supabase e do processamento local para a UI."""
+    """Formata timestamps no horário local de Brasília para a UI."""
     if not value:
-        return datetime.now().strftime("%d/%m/%Y %H:%M")
+        return datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return parsed.strftime("%d/%m/%Y %H:%M")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
+        return parsed.astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")
     except (TypeError, ValueError):
         return str(value)
 
