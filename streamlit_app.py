@@ -87,6 +87,8 @@ LOF_FEATURES = [
 class PolygonRecord:
     geometry: object
     area_ha: float
+    producer_name: str = ""
+    farm_name: str = ""
 
 
 @dataclass
@@ -147,11 +149,25 @@ def polygon_area_ha(geometry):
 
 def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
     reader = shapefile.Reader(shp=io.BytesIO(shp_bytes))
+    field_names = [str(field[0]) for field in reader.fields[1:]]
+    field_keys = {normalise_header_key(name): name for name in field_names}
+    producer_field = next((field_keys[key] for key in ("PRODUTOR", "PRODUCER") if key in field_keys), None)
+    farm_field = next((field_keys[key] for key in ("FAZENDA", "FARM", "PROPERTY") if key in field_keys), None)
     records = []
-    for shp in reader.shapes():
+    for shp, attributes in zip(reader.shapes(), reader.records()):
         geometry = shapely_shape(shp.__geo_interface__)
-        records.append(PolygonRecord(geometry, polygon_area_ha(geometry)))
+        attribute_map = dict(zip(field_names, attributes))
+        producer = str(attribute_map.get(producer_field) or "").strip() if producer_field else ""
+        farm = str(attribute_map.get(farm_field) or "").strip() if farm_field else ""
+        records.append(PolygonRecord(geometry, polygon_area_ha(geometry), producer, farm))
     return records
+
+
+def shp_source_names(polygons: list[PolygonRecord]) -> tuple[str, str]:
+    """Obtém produtor e fazenda do primeiro atributo preenchido no SHP."""
+    producer = next((item.producer_name for item in polygons if str(item.producer_name).strip()), "")
+    farm = next((item.farm_name for item in polygons if str(item.farm_name).strip()), "")
+    return str(producer).strip(), str(farm).strip()
 
 
 @st.cache_resource(show_spinner=False)
@@ -1094,7 +1110,8 @@ def main():
                 with st.spinner("Processando Excel, SHP, histórico e localização..."):
                     try:
                         polygons = read_polygons(shp.getvalue())
-                        sample, elements, _ = parse_workbook(excel.getvalue(), polygons, "", "")
+                        shp_producer, shp_farm = shp_source_names(polygons)
+                        sample, elements, _ = parse_workbook(excel.getvalue(), polygons, shp_producer, shp_farm)
                         radius_m = validate_radius(radius_m)
                         if not (sample["year"].astype(str) == CURRENT_YEAR).any():
                             raise ValueError("A planilha foi lida, mas não contém registros do ciclo 2026. Verifique se a aba 2026 existe e está dentro do limite SHP.")
@@ -1143,6 +1160,13 @@ def main():
                         result["final_status"] = result.apply(combine_detection, axis=1)
                         result = apply_ph_smp_validation(result)
                         result["display_status"] = result.apply(display_classification, axis=1)
+                        # O SHP é a fonte oficial da identificação da área.
+                        # Todos os pontos passam a carregar produtor/fazenda
+                        # do atributo, independentemente do conteúdo do Excel.
+                        client_name = shp_producer or (str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente")
+                        farm_name = shp_farm or (str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda")
+                        result["client"] = client_name
+                        result["farm"] = farm_name
                         # A interface e a exportação destacam somente a confirmação
                         # simultânea por LOF + regressão temporal espacial.
                         evidence = select_evidence(result)
@@ -1151,8 +1175,6 @@ def main():
                         original_bytes = excel.getvalue()
                         shp_bytes = shp.getvalue()
                         reanalysis_bytes = export_individual(original_bytes, export_evidence, radius_m)
-                        client_name = str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente"
-                        farm_name = str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda"
                         area_ha = sum(p.area_ha for p in polygons)
                         persisted_metadata = {}
                         if database_configured():

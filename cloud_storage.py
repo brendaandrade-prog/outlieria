@@ -221,6 +221,26 @@ def _find_existing_analysis(*, source_hash: str, client_name: str, farm_name: st
         names = {str(row.get("file_name") or "") for row in files}
         if original_name in names or shp_name in names:
             return candidate, files
+    # A fonte oficial pode ter corrigido produtor/fazenda no SHP. Nesse caso,
+    # procure também pelos nomes dos arquivos em qualquer análise do ano,
+    # evitando criar uma duplicata quando o resumo antigo tinha nomes errados.
+    by_year = supabase_request(
+        "analyses",
+        params={
+            "analysis_year": f"eq.{year}",
+            "select": "*",
+            "order": "updated_at.desc,inserted_at.desc",
+            "limit": "100",
+        },
+    ) or []
+    known_ids = {str(candidate.get("id")) for candidate in candidates}
+    for candidate in by_year:
+        if str(candidate.get("id")) in known_ids:
+            continue
+        files = _analysis_files(str(candidate["id"]))
+        names = {str(row.get("file_name") or "") for row in files}
+        if original_name in names or shp_name in names:
+            return candidate, files
     # Projetos antigos podem ter o resumo gravado sem os arquivos indexados.
     # Se houver somente um resumo para a mesma fazenda/ano, ele é a fonte lógica
     # que deve ser atualizada pelo novo envio.

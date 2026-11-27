@@ -159,6 +159,10 @@ class OutlieriaSpatialTests(unittest.TestCase):
         self.assertAlmostEqual(sample.iloc[0]["longitude"], -54.23)
         self.assertAlmostEqual(sample.iloc[0]["latitude"], -28.498)
 
+    def test_shp_names_are_used_as_source_identity(self):
+        polygons = [app.PolygonRecord(None, 10.0, "Produtor do SHP", "Fazenda do SHP")]
+        self.assertEqual(app.shp_source_names(polygons), ("Produtor do SHP", "Fazenda do SHP"))
+
     def test_persisted_analysis_is_hydrated_for_vision(self):
         record = app.build_persisted_analysis({
             "analysis_id": "a1",
