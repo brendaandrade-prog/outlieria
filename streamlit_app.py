@@ -189,9 +189,9 @@ def read_polygons(shp_bytes: bytes) -> list[PolygonRecord]:
         geometry = shapely_shape(shp.__geo_interface__)
         attributes = attribute_rows[index] if index < len(attribute_rows) else []
         attribute_map = dict(zip(field_names, attributes))
-        producer = str(attribute_map.get(producer_field) or "").strip() if producer_field else ""
-        farm = str(attribute_map.get(farm_field) or "").strip() if farm_field else ""
-        field = str(attribute_map.get(field_field) or "").strip() if field_field else ""
+        producer = shp_attribute_text(attribute_map.get(producer_field)) if producer_field else ""
+        farm = shp_attribute_text(attribute_map.get(farm_field)) if farm_field else ""
+        field = shp_attribute_text(attribute_map.get(field_field)) if field_field else ""
         records.append(PolygonRecord(geometry, polygon_area_ha(geometry), producer, farm, field))
     if archive:
         archive.close()
@@ -245,6 +245,16 @@ def normalise_columns(columns: Iterable[object]) -> list[str]:
 def normalise_header_key(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ascii", "ignore").decode()
     return "".join(character for character in text.upper().strip() if character.isalnum())
+
+
+def shp_attribute_text(value: object) -> str:
+    """Converte atributos DBF sem descartar valores zero ou bytes."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    text = str(value).strip()
+    return "" if text.lower() in {"", "none", "nan"} else text
 
 
 def canonicalise_coordinate_columns(frame: pd.DataFrame) -> pd.DataFrame:
