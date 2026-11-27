@@ -1126,7 +1126,28 @@ def render_scatter(result: pd.DataFrame) -> None:
     width, height = 820, 280
     # Reserva uma coluna própria para a legenda, sem sobreposição com o gráfico.
     left, right, top, bottom = 145, 16, 18, 38
-    x_values = pd.to_numeric(points["source_row"], errors="coerce").fillna(0).to_numpy(dtype=float)
+    # O eixo X é organizado em blocos por lavoura, preservando a ordem em que
+    # as lavouras aparecem na planilha e delimitando visualmente cada região.
+    if "crop" in points.columns:
+        crop_order = ordered_unique(points["crop"].fillna("Sem lavoura"))
+    else:
+        crop_order = ["Sem lavoura"]
+        points["crop"] = "Sem lavoura"
+    ordered_parts = []
+    crop_regions = []
+    cursor = 0
+    for crop_name in crop_order:
+        crop_points = points[points["crop"].astype(str) == str(crop_name)].copy()
+        if crop_points.empty:
+            continue
+        crop_points = crop_points.sort_values("source_row", kind="stable")
+        start_x = cursor
+        cursor += len(crop_points)
+        crop_regions.append((str(crop_name), start_x, cursor - 1))
+        ordered_parts.append(crop_points)
+        cursor += 1  # espaço visual entre lavouras
+    points = pd.concat(ordered_parts, ignore_index=True) if ordered_parts else points.reset_index(drop=True)
+    x_values = np.array([index + sum(1 for _, start, end in crop_regions if end < index) for index in range(len(points))], dtype=float)
     y_values = pd.to_numeric(points["value"], errors="coerce").to_numpy(dtype=float)
     raw_x_min, raw_x_max = float(np.nanmin(x_values)), float(np.nanmax(x_values))
     raw_y_min, raw_y_max = float(np.nanmin(y_values)), float(np.nanmax(y_values))
@@ -1138,7 +1159,8 @@ def render_scatter(result: pd.DataFrame) -> None:
         axis_max = math.ceil(raw_max / step) * step
         if axis_min == axis_max: axis_max = axis_min + step
         return axis_min, axis_max, step
-    x_min, x_max, x_step = rounded_axis(raw_x_min, raw_x_max)
+    x_min, x_max = -0.5, max(raw_x_max, 0.5)
+    x_step = 1.0
     y_min, y_max, y_step = rounded_axis(raw_y_min, raw_y_max)
     def sx(x): return left + ((x - x_min) / (x_max - x_min)) * (width - left - right)
     def sy(y): return top + ((y_max - y) / (y_max - y_min)) * (height - top - bottom)
@@ -1164,11 +1186,14 @@ def render_scatter(result: pd.DataFrame) -> None:
         fraction = (y_max - y_tick) / (y_max - y_min)
         gy = top + fraction * (height - top - bottom)
         grid_parts.append(f'<line x1="{left}" x2="{width-right}" y1="{gy:.1f}" y2="{gy:.1f}" stroke="#e5e8df" stroke-width="1"/><text x="{left - 7}" y="{gy + 3:.1f}" text-anchor="end" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{tick_text(y_tick, y_step)}</text>')
-    x_ticks = np.arange(x_min, x_max + x_step * 0.01, x_step)
-    for x_tick in x_ticks:
-        fraction = (x_tick - x_min) / (x_max - x_min)
-        gx = left + fraction * (width - left - right)
-        grid_parts.append(f'<text x="{gx:.1f}" y="{height - bottom + 17}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" fill="#7c8880">{tick_text(x_tick, x_step)}</text>')
+    for region_index, (crop_name, start_x, end_x) in enumerate(crop_regions):
+        region_left = start_x - 0.5
+        region_right = end_x + 0.5
+        if region_index:
+            separator_x = sx(region_left)
+            grid_parts.append(f'<line x1="{separator_x:.1f}" x2="{separator_x:.1f}" y1="{top}" y2="{height-bottom}" stroke="#cbd4c4" stroke-width="1.2" stroke-dasharray="3 3"/>')
+        center_x = sx((start_x + end_x) / 2)
+        grid_parts.append(f'<text x="{center_x:.1f}" y="{height - bottom + 17}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9" font-weight="600" fill="#6f7c76">{html.escape(crop_name)}</text>')
     grid = "".join(grid_parts)
     legend = '<g font-family="IBM Plex Mono, monospace" font-size="9"><circle cx="13" cy="92" r="4" fill="#b79b43"/><text x="23" y="95" fill="#6f7c76">atenção</text><circle cx="13" cy="112" r="4" fill="#d8793e"/><text x="23" y="115" fill="#6f7c76">outlier 2026</text><circle cx="13" cy="132" r="4" fill="#7656a8"/><text x="23" y="135" fill="#6f7c76">anomalia</text></g>'
     hover_rules = "".join(f".outlieria-svg:has(.point-{index}:hover) .tooltip-{index}{{opacity:1}}" for index in range(len(circles)))
