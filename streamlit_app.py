@@ -8,6 +8,7 @@ import math
 import os
 import unicodedata
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from dataclasses import dataclass
 from typing import Iterable
@@ -53,6 +54,7 @@ LOF_THRESHOLD_PERCENTILE = 90.0
 ATTENTION_MARGIN = 0.0
 MIN_LOF_NEIGHBORS = 3
 MIN_REGRESSION_CYCLES = 3
+PROCESS_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="outlieria-process")
 # Posições físicas do Excel, em índice zero: A, B, G, H e S–W.
 # Isso não significa ignorar um elemento cujo cabeçalho seja "S" (Enxofre).
 IGNORED_EXCEL_COLUMN_INDICES = {0, 1, 6, 7, *range(18, 23)}
@@ -1078,6 +1080,43 @@ def rehydrate_persisted_analysis(payload: dict[str, object]) -> dict[str, object
     }
 
 
+def process_uploaded_source_job(original_bytes: bytes, shp_bytes: bytes, radius_m: float, excel_name: str, shp_name: str) -> tuple[dict[str, object], str | None]:
+    """Processa e persiste uma fonte em uma tarefa independente da navegação."""
+    processed = process_source_bytes(original_bytes, shp_bytes, radius_m)
+    reanalysis_bytes = export_individual(original_bytes, processed["evidence"], processed["radius_m"])
+    metadata: dict[str, object] = {}
+    message = None
+    if database_configured():
+        try:
+            metadata = persist_analysis(
+                client_name=processed["client_name"], farm_name=processed["farm_name"], year=int(CURRENT_YEAR),
+                radius_m=processed["radius_m"], original=original_bytes, shp_bytes=shp_bytes,
+                reanalysis=reanalysis_bytes, original_name=excel_name, shp_name=shp_name,
+                area_ha=processed["area_ha"], point_count=len(processed["result"]),
+                outlier_count=len(processed["evidence"]), attention_count=len(processed["attention"]),
+                result=processed["result"], lof_min_neighbors=MIN_LOF_NEIGHBORS,
+            ) or {}
+            message = "Análise atualizada no Supabase e no Google Drive." if cloud_storage_configured() else "Análise atualizada no Supabase; configure o Google Drive para armazenar os arquivos."
+        except Exception as storage_exc:
+            message = f"A análise foi processada nesta sessão, mas não pôde ser sincronizada com a nuvem: {storage_exc}"
+    else:
+        message = f"A análise foi processada somente nesta sessão. Configure estas Secrets para ativar o Supabase e o Google Drive: {', '.join(missing_settings())}."
+    record = {
+        "analysis_id": metadata.get("analysis_id"),
+        "source_hash": metadata.get("source_hash") or sha256(original_bytes + shp_bytes),
+        "analysis_key": analysis_identity_key(processed["client_name"], processed["farm_name"], excel_name, shp_name),
+        "name": excel_name, "shp_name": shp_name,
+        "client_name": processed["client_name"], "farm_name": processed["farm_name"],
+        "original": original_bytes, "shp_bytes": shp_bytes, "radius_m": processed["radius_m"],
+        "result": processed["result"], "evidence": processed["evidence"], "attention": processed["attention"],
+        "polygons": processed["polygons"], "area_ha": processed["area_ha"], "elements": processed["elements"],
+        "file_urls": metadata.get("file_urls", {}),
+        "updated_at": metadata.get("updated_at") or datetime.now(ZoneInfo("America/Sao_Paulo")).isoformat(),
+        "persisted": bool(metadata.get("analysis_id")),
+    }
+    return record, message
+
+
 def render_scatter(result: pd.DataFrame) -> None:
     """Renderiza dispersão em SVG, sem Altair, Plotly ou dependências de gráfico."""
     points = result.dropna(subset=["source_row", "value"]).copy()
@@ -1268,118 +1307,27 @@ def main():
         with action_right:
             ready = st.button("✓  Pronto", type="primary", use_container_width=False)
         if ready:
-            if not excel_bytes or not shp_bytes_cached: st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
+            if not excel_bytes or not shp_bytes_cached:
+                st.error("Selecione a planilha Excel e o limite SHP antes de continuar.")
+            elif st.session_state.get("processing_future") and not st.session_state.processing_future.done():
+                st.info("Processamento em andamento; você pode trocar de navegação sem interrompê-lo.")
             else:
-                with st.spinner("Processando Excel, SHP, histórico e localização..."):
-                    try:
-                        polygons = read_polygons(shp_bytes_cached)
-                        shp_producer, shp_farm = shp_source_names(polygons)
-                        sample, elements, _ = parse_workbook(excel_bytes, polygons, shp_producer, shp_farm)
-                        radius_m = validate_radius(radius_m)
-                        if not (sample["year"].astype(str) == CURRENT_YEAR).any():
-                            raise ValueError("A planilha foi lida, mas não contém registros do ciclo 2026. Verifique se a aba 2026 existe e está dentro do limite SHP.")
-                        if not elements:
-                            raise ValueError("Nenhum elemento numérico elegível foi encontrado para a análise.")
-                        result, _, _ = classify(sample, elements, radius_m); result = locate_ibge(result)
-                        with st.spinner("Executando LOF espacial no histórico regional..."):
-                            lof_result = run_spatial_lof(sample, elements, radius_m)
-                        if not LOF_AVAILABLE:
-                            st.warning(f"LOF indisponível neste ambiente; a regressão espacial continuará ativa. Detalhe: {SKLEARN_IMPORT_ERROR or 'scikit-learn não carregado.'}")
-                        if lof_result.empty:
-                            result["ml_status"] = "dados insuficientes"
-                            result["ml_score"] = np.nan
-                            result["ml_neighbor_count"] = np.nan
-                            result["ml_k_effective"] = np.nan
-                            result["ml_radius_m"] = radius_m
-                            result["ml_rule"] = f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m"
-                            result["ml_mean_distance_m"] = np.nan
-                            result["ml_regional_median"] = np.nan
-                            result["ml_reference_scope"] = "distribuição histórica espacial da mesma região; sem pareamento por ID"
-                            result["ml_historical_percentile"] = np.nan
-                            result["ml_historical_distribution_shift"] = np.nan
-                            result["ml_current_cohort_shift"] = np.nan
-                        else:
-                            result = result.merge(lof_result[["sample_index", "element", "ml_score", "ml_status", "ml_neighbor_count", "ml_k_effective", "ml_radius_m", "ml_rule", "ml_mean_distance_m", "ml_regional_median", "ml_reference_scope", "ml_historical_percentile", "ml_historical_distribution_shift", "ml_current_cohort_shift"]], on=["sample_index", "element"], how="left")
-                            result["ml_status"] = result["ml_status"].fillna("dados insuficientes")
-                        result["ml_radius_m"] = result["ml_radius_m"].fillna(radius_m)
-                        result["ml_rule"] = result["ml_rule"].fillna(f"LOF não calculado; mínimo={MIN_LOF_NEIGHBORS}; raio={radius_m:g} m")
-                        with st.spinner("Executando regressão temporal por coordenada..."):
-                            try:
-                                regression_result = run_spatial_regression(sample, elements, radius_m)
-                            except Exception as regression_exc:
-                                regression_result = pd.DataFrame()
-                                st.warning(f"A regressão espacial não pôde ser calculada; os dados foram importados sem classificação temporal: {regression_exc}")
-                        if regression_result.empty:
-                            result["reg_status"] = "dados insuficientes"
-                            result["reg_prediction"] = np.nan
-                            result["reg_residual"] = np.nan
-                            result["reg_score"] = np.nan
-                            result["reg_cycles"] = 0
-                            result["reg_rule"] = f"Regressão não calculada; mínimo={MIN_REGRESSION_CYCLES} ciclos; raio={radius_m:g} m"
-                        else:
-                            result = result.merge(regression_result, on=["sample_index", "element"], how="left")
-                            result["reg_status"] = result["reg_status"].fillna("dados insuficientes")
-                        result["reg_rule"] = result["reg_rule"].fillna(f"Regressão não calculada; mínimo={MIN_REGRESSION_CYCLES} ciclos; raio={radius_m:g} m")
-                        result["final_status"] = result.apply(combine_detection, axis=1)
-                        result = apply_ph_smp_validation(result)
-                        result["display_status"] = result.apply(display_classification, axis=1)
-                        # O SHP é a fonte oficial da identificação da área.
-                        # Todos os pontos passam a carregar produtor/fazenda
-                        # do atributo, independentemente do conteúdo do Excel.
-                        client_name = shp_producer or (str(result.client.dropna().iloc[0]) if not result.empty and result.client.notna().any() else "Sem cliente")
-                        farm_name = shp_farm or (str(result.farm.dropna().iloc[0]) if not result.empty and result.farm.notna().any() else "Sem fazenda")
-                        result["client"] = client_name
-                        result["farm"] = farm_name
-                        # A interface e a exportação destacam somente a confirmação
-                        # simultânea por LOF + regressão temporal espacial.
-                        evidence = select_evidence(result)
-                        attention = result[result.final_status == "atenção"].copy()
-                        export_evidence = evidence.copy()
-                        original_bytes = excel_bytes
-                        shp_bytes = shp_bytes_cached
-                        reanalysis_bytes = export_individual(original_bytes, export_evidence, radius_m)
-                        area_ha = sum(p.area_ha for p in polygons)
-                        persisted_metadata = {}
-                        if database_configured():
-                            try:
-                                persisted_metadata = persist_analysis(client_name=client_name, farm_name=farm_name, year=int(CURRENT_YEAR), radius_m=radius_m, original=original_bytes, shp_bytes=shp_bytes, reanalysis=reanalysis_bytes, original_name=excel_name, shp_name=shp_name_cached, area_ha=area_ha, point_count=len(result), outlier_count=len(evidence), attention_count=len(attention), result=result, lof_min_neighbors=MIN_LOF_NEIGHBORS) or {}
-                                if cloud_storage_configured():
-                                    st.success("Análise atualizada no Supabase e no Google Drive.")
-                                else:
-                                    st.success("Análise atualizada no Supabase; configure o Google Drive para armazenar os arquivos.")
-                            except Exception as storage_exc:
-                                st.warning(f"A análise foi processada nesta sessão, mas não pôde ser sincronizada com a nuvem: {storage_exc}")
-                        else:
-                            missing = ", ".join(missing_settings())
-                            st.warning(f"A análise foi processada somente nesta sessão. Configure estas Secrets no Streamlit Cloud para ativar o Supabase e o Google Drive: {missing}.")
-                        record = {
-                            "analysis_id": persisted_metadata.get("analysis_id"),
-                            "source_hash": persisted_metadata.get("source_hash") or sha256(original_bytes + shp_bytes),
-                            "analysis_key": analysis_identity_key(client_name, farm_name, excel_name, shp_name_cached),
-                            "name": excel_name,
-                            "shp_name": shp_name_cached,
-                            "client_name": client_name,
-                            "farm_name": farm_name,
-                            "original": original_bytes,
-                            "shp_bytes": shp_bytes,
-                            "radius_m": radius_m,
-                            "result": result,
-                            "evidence": evidence,
-                            "attention": attention,
-                            "polygons": polygons,
-                            "area_ha": area_ha,
-                            "elements": elements,
-                            "file_urls": persisted_metadata.get("file_urls", {}),
-                            "updated_at": persisted_metadata.get("updated_at") or datetime.now().astimezone().isoformat(),
-                            "persisted": bool(persisted_metadata.get("analysis_id")),
-                        }
-                        upsert_session_analysis(record)
-                        # A troca de aba mantém este snapshot; cada novo envio
-                        # substitui a fonte correspondente e atualiza a visão.
-                        st.session_state.vision_2026_result = build_vision_snapshot(st.session_state.analyses)
-                        st.session_state.vision_2026_revision += 1
-                        st.success(f"Aba 2026 atualizada: {len(evidence)} outliers confirmados exibidos.")
-                    except Exception as exc: st.exception(exc)
+                st.session_state.processing_future = PROCESS_EXECUTOR.submit(
+                    process_uploaded_source_job, excel_bytes, shp_bytes_cached, radius_m, excel_name, shp_name_cached
+                )
+                st.info("Processamento iniciado. A troca de navegação não interromperá esta análise.")
+        processing_future = st.session_state.get("processing_future")
+        if processing_future and processing_future.done():
+            try:
+                record, completion_message = processing_future.result()
+                upsert_session_analysis(record)
+                st.session_state.vision_2026_result = build_vision_snapshot(st.session_state.analyses)
+                st.session_state.vision_2026_revision += 1
+                st.session_state.pop("processing_future", None)
+                st.success(completion_message or f"Aba 2026 atualizada: {len(record['evidence'])} outliers confirmados exibidos.")
+            except Exception as processing_exc:
+                st.session_state.pop("processing_future", None)
+                st.error(f"Não foi possível concluir o processamento: {processing_exc}")
         st.markdown(f"<div class='section-head'><div><div class='section-kicker'>análises inseridas</div><h2>Arquivos disponíveis</h2></div><span class='source-count'>{len(st.session_state.analyses)} análise{'s' if len(st.session_state.analyses) != 1 else ''}</span></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
         if not st.session_state.analyses:
